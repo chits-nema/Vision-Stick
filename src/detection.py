@@ -37,7 +37,6 @@ while True:
 
     results = model(frame)[0]
     #results = model.predict(stream=True, imgsz=512)
-    
 
     detections = sv.Detections.from_ultralytics(results)
 
