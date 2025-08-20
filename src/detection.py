@@ -12,9 +12,19 @@ label_annotator = sv.LabelAnnotator()
 names = model.names
 
 # reference vals for calibration a4 width 21 cm
-KNOWN_DISTANCE = 50.0
-KNOWN_WIDTH = 21.0
- 
+KNOWN_DISTANCE = 100.0
+# KNOWN_WIDTH = 7.0
+
+KNOWN_WIDTHS = {
+    "book": 15.0,
+    "bottle": 7.0,
+    "traffic light": 30.0,
+    "stop sign": 76.0,
+    "bicycle": 60.0,
+    "cell phone": 7.0,
+    "person": 45.0
+}
+
 # method using the similarity rate
 def focal_length_calculation(known_distance, known_width, width_in_rf_image):
     return (width_in_rf_image * known_distance) / known_width
@@ -54,15 +64,16 @@ while True:
         x1, y1, x2, y2 = xyxy
         per_width = x2 - x1
 
-        # if callibration is not done yet we are calculating it with a4 paper
-        if not calibrated and class_name == "bottle":  # paper as reference
-            focalLength = focal_length_calculation(KNOWN_DISTANCE, KNOWN_WIDTH, per_width)
+        # if callibration is not done yet we are calculating it with the first object
+        if not calibrated and class_name in KNOWN_WIDTHS:
+            focalLength = focal_length_calculation(KNOWN_DISTANCE, KNOWN_WIDTHS[class_name], per_width)
             calibrated = True
             print(f"[INFO] Camera is callibrated. Focal Length = {focalLength:.2f}")
 
         distance = None
-        if calibrated:
-            distance = distance_to_camera(KNOWN_WIDTH, focalLength, per_width)
+        if calibrated and class_name in KNOWN_WIDTHS:
+            known_w = KNOWN_WIDTHS[class_name]
+            distance = distance_to_camera(known_w, focalLength, per_width)
 
         if distance:
             label_text = f"{class_name} {confidence:.2f}, {distance:.1f}cm"
