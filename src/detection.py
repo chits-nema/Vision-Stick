@@ -35,12 +35,13 @@ calibrated = False
 
 CHECKERBOARD = (6,9)
 criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
- 
+criteria_stereo= (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+
 # Creating vector to store vectors of 3D points for each checkerboard image
 objpoints = []
 # Creating vector to store vectors of 2D points for each checkerboard image
-imgpoints = [] 
- 
+imgpointsR = [] 
+imgpointsL = [] 
  
 # Defining the world coordinates for 3D points
 # objp is the 3d points relating to the world coordinates 
@@ -48,46 +49,56 @@ objp = np.zeros((1, CHECKERBOARD[0] * CHECKERBOARD[1], 3), np.float32)
 objp[0,:,:2] = np.mgrid[0:CHECKERBOARD[0], 0:CHECKERBOARD[1]].T.reshape(-1, 2)
 prev_img_shape = None
  
-# Extracting path of individual image stored in a given directory
-images = glob.glob('src/CalibrationCheckboardImages/*.jpg')
-for fname in images:
-    img = cv2.imread(fname)
-    gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
+# Start calibration from the camera
+print('Starting calibration for the 2 cameras... ')
+# Call all saved images
+for i in range(0,67):   # Put the amount of pictures you have taken for the calibration inbetween range(0,?) wenn starting from the image number 0
+    t= str(i)
+    #second argument 0 grays the image
+    ChessImaR= cv2.imread('chessboard-R'+t+'.png',0)    # Right side
+    ChessImaL= cv2.imread('chessboard-L'+t+'.png',0)    # Left side
 
     # Find the chess board corners
     # If desired number of corners are found in the image then ret = true
     #corners is the output array of the detetcted corners
     #CHECKERBOARD == patternSize - Number of inner corners per a chessboard row and column 
-    #gray = image source in grayscale
-    ret, corners = cv2.findChessboardCorners(gray, CHECKERBOARD, cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_FAST_CHECK + cv2.CALIB_CB_NORMALIZE_IMAGE)
-     
+    #if code doesn't work remove flags and set to none, just keeping flags rn to maintain robustness
+
+    retR, cornersR = cv2.findChessboardCorners(ChessImaR,
+                                               CHECKERBOARD,cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_FAST_CHECK + cv2.CALIB_CB_NORMALIZE_IMAGE)  # Define the number of chees corners we are looking for
+    retL, cornersL = cv2.findChessboardCorners(ChessImaL,
+                                               CHECKERBOARD,cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_FAST_CHECK + cv2.CALIB_CB_NORMALIZE_IMAGE)  # Left side
+    
+
     """
     If desired number of corner are detected,
     we refine the pixel coordinates and display 
     them on the images of checker board
     """
-    if ret == True:
+    if (True == retR) & (True == retL):
         objpoints.append(objp)
         # refining pixel coordinates for given 2d points.
         #takes in the OG image and the location of the corners(of the checkerboards) 
-        corners2 = cv2.cornerSubPix(gray, corners, (11,11),(-1,-1), criteria)
+        cv2.cornerSubPix(ChessImaR,cornersR,(11,11),(-1,-1),criteria)
+        cv2.cornerSubPix(ChessImaL,cornersL,(11,11),(-1,-1),criteria)
+        imgpointsR.append(cornersR)
+        imgpointsL.append(cornersL)
 
-         
-        imgpoints.append(corners2)
- 
         # Draw and display the corners
-        #just to give a detection of the cornerx
-        img = cv2.drawChessboardCorners(img, CHECKERBOARD, corners2, ret)
-        print("Looping through images")
-     
-    #cv2.imshow('img',img)
+        #just to give a detection of the cornerx 
+        #can be commented out later or removed we are just checking that the algorithm actually words
+
+        ChessImaR = cv2.drawChessboardCorners(ChessImaR, CHECKERBOARD, cornersR, ret)
+        ChessImaL = cv2.drawChessboardCorners(ChessImaL, CHECKERBOARD, cornersL, ret)
+
+
+
+    cv2.imshow('img',img)
     cv2.waitKey(0)
  
 cv2.destroyAllWindows()
  
 cap = cv2.VideoCapture(0)
-ret, frame = cap.read()
-h, w = frame.shape[:2]
 """
 Performing camera calibration by 
 passing the value of known 3D points (objpoints)
@@ -103,8 +114,29 @@ detected corners (imgpoints)
 
 """Internal parameters of the camera/lens system. E.g. focal length, optical center, and radial distortion coefficients of the lens.
 External parameters : This refers to the orientation (rotation and translation) of the camera with respect to some world coordinate system."""
-ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, gray.shape[::-1], None, None)
- 
+# Determine the new values for different parameters
+#   Right Side
+retR, mtxR, distR, rvecsR, tvecsR = cv2.calibrateCamera(objpoints,
+                                                        imgpointsR,
+                                                        ChessImaR.shape[::-1],None,None)
+hR,wR= ChessImaR.shape[:2]
+OmtxR, roiR= cv2.getOptimalNewCameraMatrix(mtxR,distR,
+                                                   (wR,hR),1,(wR,hR))
+
+#   Left Side
+retL, mtxL, distL, rvecsL, tvecsL = cv2.calibrateCamera(objpoints,
+                                                        imgpointsL,
+                                                        ChessImaL.shape[::-1],None,None)
+hL,wL= ChessImaL.shape[:2]
+OmtxL, roiL= cv2.getOptimalNewCameraMatrix(mtxL,distL,(wL,hL),1,(wL,hL))
+
+
+#we use OmtxR, OmtxL, roiL and roiR for distrotion purposes of the camera(intrinsic parameters) Om are our new camera matrices from the old code :)
+#new camera matrix for distortion old code next line
+#newcameramtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, (w,h), 1, (w,h))
+
+
+print('Cameras Ready to use')
 print("Camera matrix : \n")
 print(mtx)
 print("dist : \n")
@@ -114,9 +146,44 @@ print(rvecs)
 print("tvecs : \n")
 print(tvecs)
 
-#new camera matrix for distortion
-newcameramtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, (w,h), 1, (w,h))
+#********************************************
+#***** Calibrate the Cameras for Stereo *****
+#********************************************
 
+# StereoCalibrate function
+#flags = 0
+#flags |= cv2.CALIB_FIX_INTRINSIC
+#flags |= cv2.CALIB_FIX_PRINCIPAL_POINT
+#flags |= cv2.CALIB_USE_INTRINSIC_GUESS
+#flags |= cv2.CALIB_FIX_FOCAL_LENGTH
+#flags |= cv2.CALIB_FIX_ASPECT_RATIO
+#flags |= cv2.CALIB_ZERO_TANGENT_DIST
+#flags |= cv2.CALIB_RATIONAL_MODEL
+#flags |= cv2.CALIB_SAME_FOCAL_LENGTH
+#flags |= cv2.CALIB_FIX_K3
+#flags |= cv2.CALIB_FIX_K4
+#flags |= cv2.CALIB_FIX_K5
+retS, MLS, dLS, MRS, dRS, R, T, E, F= cv2.stereoCalibrate(objpoints,
+                                                          imgpointsL,
+                                                          imgpointsR,
+                                                          mtxL,
+                                                          distL,
+                                                          mtxR,
+                                                          distR,
+                                                          ChessImaR.shape[::-1],
+                                                          criteria = criteria_stereo,
+                                                          flags = cv2.CALIB_FIX_INTRINSIC)
+
+# StereoRectify function
+rectify_scale= 0 # if 0 image croped, if 1 image nor croped
+RL, RR, PL, PR, Q, roiL, roiR= cv2.stereoRectify(MLS, dLS, MRS, dRS,
+                                                 ChessImaR.shape[::-1], R, T,
+                                                 rectify_scale,(0,0))  # last paramater is alpha, if 0= croped, if 1= not croped
+# initUndistortRectifyMap function
+Left_Stereo_Map= cv2.initUndistortRectifyMap(MLS, dLS, RL, PL,
+                                             ChessImaR.shape[::-1], cv2.CV_16SC2)   # cv2.CV_16SC2 this format enables us the programme to work faster
+Right_Stereo_Map= cv2.initUndistortRectifyMap(MRS, dRS, RR, PR,
+                                              ChessImaR.shape[::-1], cv2.CV_16SC2)
 
 while True:
     read, frame = cap.read()
