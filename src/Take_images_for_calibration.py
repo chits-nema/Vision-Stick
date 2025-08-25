@@ -21,6 +21,13 @@ criteria =(cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 CamR= cv2.VideoCapture(0)   # 0 -> Right Camera
 CamL= cv2.VideoCapture(1)   # 1 -> Left Camera
 
+#Force both cameras to have the same resolution
+CamL.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+CamL.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+CamR.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+CamR.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
 while True:
     retR, frameR= CamR.read()
     retL, frameL= CamL.read()
