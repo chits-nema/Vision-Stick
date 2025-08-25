@@ -2,13 +2,9 @@ import cv2
 import supervision as sv
 from ultralytics import YOLO
 import numpy as np
-import glob
 
+#Filtering
 kernel= np.ones((3,3),np.uint8)
-
-# for the first time for callibration
-focalLength = None
-calibrated = False
 
 #Camera Calibration
 # Defining the dimensions of checkerboard aka the width and height of the checkerboard
@@ -27,12 +23,14 @@ imgpointsL = []
 # objp is the 3d points relating to the world coordinates 
 objp = np.zeros((1, CHECKERBOARD[0] * CHECKERBOARD[1], 3), np.float32)
 objp[0,:,:2] = np.mgrid[0:CHECKERBOARD[0], 0:CHECKERBOARD[1]].T.reshape(-1, 2)
-prev_img_shape = None
+
+#Scale object points up to the sizes of the squares (2 cm -> 20 mm)
+objp = objp *20
  
 # Start calibration from the camera
 print('Starting calibration for the 2 cameras... ')
 # Call all saved images
-for i in range(0,20):   # Put the amount of pictures you have taken for the calibration inbetween range(0,?) wenn starting from the image number 0
+for i in range(0,64):   # Put the amount of pictures you have taken for the calibration inbetween range(0,?) wenn starting from the image number 0
     t= str(i)
     #second argument 0 grays the image
     ChessImaR= cv2.imread('chessboard-R'+t+'.png',0)    # Right side
@@ -69,8 +67,8 @@ for i in range(0,20):   # Put the amount of pictures you have taken for the cali
         #just to give a detection of the cornerx 
         #can be commented out later or removed we are just checking that the algorithm actually words
 
-        ChessImaR = cv2.drawChessboardCorners(ChessImaR, CHECKERBOARD, cornersR, retR)
-        ChessImaL = cv2.drawChessboardCorners(ChessImaL, CHECKERBOARD, cornersL, retL)
+        #ChessImaR = cv2.drawChessboardCorners(ChessImaR, CHECKERBOARD, cornersR, retR)
+        #ChessImaL = cv2.drawChessboardCorners(ChessImaL, CHECKERBOARD, cornersL, retL)
 
 
     cv2.waitKey(0)
@@ -154,13 +152,14 @@ retS, MLS, dLS, MRS, dRS, R, T, E, F= cv2.stereoCalibrate(objpoints,
                                                           distR,
                                                           (wR, hR),
                                                           criteria = criteria_stereo,
-                                                          flags = cv2.CALIB_FIX_INTRINSIC)
+                                                          flags = cv2.CALIB_FIX_INTRINSIC | cv2.CALIB_FIX_ASPECT_RATIO | cv2.CALIB_SAME_FOCAL_LENGTH)
 
 # StereoRectify function
 rectify_scale= 0 # if 0 image croped, if 1 image nor croped
 RL, RR, PL, PR, Q, roiL, roiR= cv2.stereoRectify(MLS, dLS, MRS, dRS,
                                                  (wR, hR), R, T,
                                                  rectify_scale,(0,0))  # last paramater is alpha, if 0= croped, if 1= not croped
+
 # initUndistortRectifyMap function
 Left_Stereo_Map= cv2.initUndistortRectifyMap(MLS, dLS, RL, PL,
                                              (wL, hL), cv2.CV_16SC2)   # cv2.CV_16SC2 this format enables us the programme to work faster
@@ -184,17 +183,17 @@ stereo = cv2.StereoSGBM_create(minDisparity = min_disp,
     P2 = 32*3*window_size**2)
 
 # Used for the filtered image
-stereoR=cv2.ximgproc.createRightMatcher(stereo) # Create another stereo for right this time
+#stereoR=cv2.ximgproc.createRightMatcher(stereo) # Create another stereo for right this time
 
 #STEP 4: APPLY WLS FILTER
 #WLS Parameters
-lmbda = 80000
-sigma = 1.8
-visual_multiplier = 1.0
+#lmbda = 80000
+#sigma = 1.8
+#visual_multiplier = 1.0
  
-wls_filter = cv2.ximgproc.createDisparityWLSFilter(matcher_left=stereo)
-wls_filter.setLambda(lmbda)
-wls_filter.setSigmaColor(sigma)
+#wls_filter = cv2.ximgproc.createDisparityWLSFilter(matcher_left=stereo)
+#wls_filter.setLambda(lmbda)
+#wls_filter.setSigmaColor(sigma)
 
 #STEP 5: START STEREOVISION + CALCULATION OF DEPTH MAP
 
@@ -204,8 +203,9 @@ box_annotator = sv.BoxAnnotator()
 label_annotator = sv.LabelAnnotator()
 names = model.names
 
-camL = cv2.VideoCapture(0)
-camR = cv2.VideoCapture(1)
+camR = cv2.VideoCapture(0)
+camL = cv2.VideoCapture(1)
+
 while True:
     retR, frameR = camR.read()
     retL, frameL = camL.read()
@@ -215,47 +215,46 @@ while True:
     left_nice = cv2.remap(frameL, Left_Stereo_Map[0], Left_Stereo_Map[1], interpolation = cv2.INTER_LANCZOS4, borderMode = cv2.BORDER_CONSTANT)
     right_nice = cv2.remap(frameR, Right_Stereo_Map[0], Right_Stereo_Map[1], interpolation = cv2.INTER_LANCZOS4, borderMode = cv2.BORDER_CONSTANT)
 
-    # undistort
-    #dst = cv2.undistort(frame, mtx, dist, None, newcameramtx)
- 
-    # crop the image....this is cropping out the black parts of the image when things are undistorted
-    #x, y, w, h = roi
-    #dist in now the undistoted frame
-    #dst = dst[y:y+h, x:x+w]
-
     #Convert from color (BGR) to gray
     grayR = cv2.cvtColor(right_nice, cv2.COLOR_BGR2GRAY)
     grayL = cv2.cvtColor(left_nice, cv2.COLOR_BGR2GRAY)
 
     #Compute the 2 images for the depth image
-    disp = stereo.compute(grayL, grayR)#.astype(np.float32)/16
-    dispL = disp                                                                                                                                                                                                                    
-    dispR = stereoR.compute(grayR, grayL)
-    dispL= np.int16(dispL)
-    dispR= np.int16(dispR)
+    #disp = stereo.compute(grayL, grayR).astype(np.float32)/16
+    #dispL = disp                                                                                                                                                                                                                    
+    #dispR = stereoR.compute(grayR, grayL)
+    #dispL= np.int16(dispL)
+    #dispR= np.int16(dispR)
+
 
     #Using WLS Filter
-    filteredImg = wls_filter.filter(dispL, grayL, None, dispR)
-    filteredImg = cv2.normalize(src=filteredImg, dst=filteredImg, beta = 0, alpha=255, norm_type = cv2.NORM_MINMAX)
-    filteredImg = np.uint8(filteredImg)
+    #filteredImg = wls_filter.filter(dispL, grayL, None, dispR)
+    #filteredImg = cv2.normalize(src=filteredImg, dst=filteredImg, beta = 0, alpha=255, norm_type = cv2.NORM_MINMAX)
+    #filteredImg = np.uint8(filteredImg)
     #cv2.imshow('Disparity Map', filteredImg)
-    disp= ((disp.astype(np.float32)/16)-min_disp)/num_disp # Calculation allowing us to have 0 for the most distant object able to detect
+    #disp= ((disp.astype(np.float32)/16)-min_disp)/num_disp  #Calculation allowing us to have 0 for the most distant object able to detect
+
+    disp_raw = stereo.compute(grayL, grayR).astype(np.float32)
+    
+    #Map Disparity to 3D World
+    points_3D = cv2.reprojectImageTo3D(disp_raw, Q)
+
     # Resize the image for faster executions
-    dispR= cv2.resize(disp,None,fx=0.7, fy=0.7, interpolation = cv2.INTER_AREA)
+    #dispR= cv2.resize(disp,None,fx=0.7, fy=0.7, interpolation = cv2.INTER_AREA)
 
     #Filtering the results with a closing filter
-    closing = cv2.morphologyEx(disp, cv2.MORPH_CLOSE, kernel)
+    #closing = cv2.morphologyEx(disp, cv2.MORPH_CLOSE, kernel)
 
     #Colors map
-    dispc = (closing-closing.min())*255
-    dispC = dispc.astype(np.uint8)
-    dispColor = cv2.applyColorMap(dispC, cv2.COLORMAP_OCEAN)
-    filt_Color = cv2.applyColorMap(filteredImg, cv2.COLORMAP_OCEAN)
+    #dispc = (closing-closing.min())*255
+    #dispC = dispc.astype(np.uint8)
+    #dispColor = cv2.applyColorMap(dispC, cv2.COLORMAP_OCEAN)
+    #filt_Color = cv2.applyColorMap(filteredImg, cv2.COLORMAP_OCEAN)
 
     #Result for Depth_image
     #cv2.imshow("Filtered Color Depth", filt_Color)
 
-    results = model(right_nice)[0]
+    results = model(frameL)[0]
     #results = model.predict(stream=True, imgsz=512)
 
     detections = sv.Detections.from_ultralytics(results)
@@ -269,31 +268,22 @@ while True:
 
         # bounding box width in pixels 
         x1, y1, x2, y2 = [int(v) for v in xyxy]
-        x_center = (x1 + x2)//2
-        y_center = (y1 + y2)//2
+        bbox_points = points_3D[y1:y2, x1:x2, :]
 
-        #Take a small 3x3 neighborhood to average disparity
-
-        h, w = disp.shape
-        y_min = max(0, y_center -2)
-        y_max = min(h, y_center+3)
-        x_min = max(0, x_center-2)
-        x_max = min(w, x_center+3)
-        avg_disp = np.mean(disp[y_min:y_max, x_min:x_max])
-
-        #Convert disparity to distance
-        distance = -593.97*avg_disp**3 + 1506.8*avg_disp**2 - 1373.1*avg_disp + 522.06
-        distance = np.around(distance*0.01, decimals=2)  # in meters
+        #Get average distance using the Z values
+        mask = np.isfinite(bbox_points[:, :, 2])
+        valid_Z = bbox_points[:, :, 2][mask]
+        avg_distance = np.mean(valid_Z)/1000
 
         confidence_text = f"{confidence:.2f}"
-        label_text = f"{class_name} {confidence_text}, {distance:.2f}m"
+        label_text = f"{class_name} {confidence_text}, {avg_distance:.2f}m"
         labels.append(label_text)
 
-        # warning
-        if distance and distance < 100:
-            print(f"[WARNING] {class_name} so close: {distance:.1f}cm")
+        #Warning for close objects: ALTER LATER FOR VIBRATION SENSOR
+        if avg_distance and avg_distance < 1000:
+            print(f"[WARNING] {class_name} so close: {avg_distance:.1f}m")
 
-    annotated_frame = box_annotator.annotate(scene=right_nice.copy(), detections=detections)
+    annotated_frame = box_annotator.annotate(scene=frameL.copy(), detections=detections)
     annotated_image = label_annotator.annotate(scene=annotated_frame, detections=detections, labels=labels)
     #annotated_dst = box_annotator.annotate(scene= dst.copy(), detections=detections)
     #annotated_dst_img = label_annotator.annotate(scene=annotated_dst, detections=detections, labels=labels)
