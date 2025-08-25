@@ -9,7 +9,7 @@ kernel= np.ones((3,3),np.uint8)
 #Camera Calibration
 # Defining the dimensions of checkerboard aka the width and height of the checkerboard
 
-CHECKERBOARD = (8,5)
+CHECKERBOARD = (7,5)
 criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 criteria_stereo= (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 
@@ -25,12 +25,12 @@ objp = np.zeros((1, CHECKERBOARD[0] * CHECKERBOARD[1], 3), np.float32)
 objp[0,:,:2] = np.mgrid[0:CHECKERBOARD[0], 0:CHECKERBOARD[1]].T.reshape(-1, 2)
 
 #Scale object points up to the sizes of the squares (2 cm -> 20 mm)
-objp = objp *20
+objp *= 34.0
  
 # Start calibration from the camera
 print('Starting calibration for the 2 cameras... ')
 # Call all saved images
-for i in range(0,64):   # Put the amount of pictures you have taken for the calibration inbetween range(0,?) wenn starting from the image number 0
+for i in range(0,20):   # Put the amount of pictures you have taken for the calibration inbetween range(0,?) wenn starting from the image number 0
     t= str(i)
     #second argument 0 grays the image
     ChessImaR= cv2.imread('chessboard-R'+t+'.png',0)    # Right side
@@ -203,7 +203,7 @@ box_annotator = sv.BoxAnnotator()
 label_annotator = sv.LabelAnnotator()
 names = model.names
 
-camR = cv2.VideoCapture(0)
+camR = cv2.VideoCapture(2)
 camL = cv2.VideoCapture(1)
 
 while True:
@@ -220,7 +220,7 @@ while True:
     grayL = cv2.cvtColor(left_nice, cv2.COLOR_BGR2GRAY)
 
     #Compute the 2 images for the depth image
-    #disp = stereo.compute(grayL, grayR).astype(np.float32)/16
+    disp = stereo.compute(grayL, grayR).astype(np.float32)
     #dispL = disp                                                                                                                                                                                                                    
     #dispR = stereoR.compute(grayR, grayL)
     #dispL= np.int16(dispL)
@@ -234,10 +234,10 @@ while True:
     #cv2.imshow('Disparity Map', filteredImg)
     #disp= ((disp.astype(np.float32)/16)-min_disp)/num_disp  #Calculation allowing us to have 0 for the most distant object able to detect
 
-    disp_raw = stereo.compute(grayL, grayR).astype(np.float32)
+    #disp_raw = stereo.compute(grayL, grayR).astype(np.float32)
     
     #Map Disparity to 3D World
-    points_3D = cv2.reprojectImageTo3D(disp_raw, Q)
+    points_3D = cv2.reprojectImageTo3D(disp, Q)
 
     # Resize the image for faster executions
     #dispR= cv2.resize(disp,None,fx=0.7, fy=0.7, interpolation = cv2.INTER_AREA)
@@ -254,7 +254,7 @@ while True:
     #Result for Depth_image
     #cv2.imshow("Filtered Color Depth", filt_Color)
 
-    results = model(frameL)[0]
+    results = model(left_nice)[0]
     #results = model.predict(stream=True, imgsz=512)
 
     detections = sv.Detections.from_ultralytics(results)
@@ -273,14 +273,14 @@ while True:
         #Get average distance using the Z values
         mask = np.isfinite(bbox_points[:, :, 2])
         valid_Z = bbox_points[:, :, 2][mask]
-        avg_distance = np.mean(valid_Z)/1000
+        avg_distance = np.median(valid_Z)/1000
 
         confidence_text = f"{confidence:.2f}"
         label_text = f"{class_name} {confidence_text}, {avg_distance:.2f}m"
         labels.append(label_text)
 
         #Warning for close objects: ALTER LATER FOR VIBRATION SENSOR
-        if avg_distance and avg_distance < 1000:
+        if avg_distance and avg_distance < 10:
             print(f"[WARNING] {class_name} so close: {avg_distance:.1f}m")
 
     annotated_frame = box_annotator.annotate(scene=frameL.copy(), detections=detections)
