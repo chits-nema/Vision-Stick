@@ -2,6 +2,8 @@ import cv2
 import supervision as sv
 from ultralytics import YOLO
 import numpy as np
+import socket
+import json
 
 #Filtering
 kernel= np.ones((3,3),np.uint8)
@@ -217,6 +219,10 @@ names = model.names
 camR = cv2.VideoCapture(2)
 camL = cv2.VideoCapture(0)
 
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+sock.connect(("localhost", 65432))  # Connect to the correct port
+
+
 while True:
     retR, frameR = camR.read()
     retL, frameL = camL.read()
@@ -287,9 +293,15 @@ while True:
         label_text = f"{class_name} {confidence_text}, {distance_m:.2f}m"
         labels.append(label_text)
 
-        #Warning for close objects: ALTER LATER FOR VIBRATION SENSOR
-        if distance_m and distance_m < 2:
-            print(f"[WARNING] {class_name} so close: {distance_m:.1f}m")
+        if distance_m is not None:
+            data = {
+                "class": class_name,
+                "confidence": float(confidence),
+                "distance_m": float(distance_m),
+                "bbox": [int(x1), int(y1), int(x2), int(y2)]
+            }
+            json_data = json.dumps(data)
+            sock.sendall(json_data.encode('utf-8'))
 
     annotated_frame = box_annotator.annotate(scene=frameL.copy(), detections=detections)
     annotated_image = label_annotator.annotate(scene=annotated_frame, detections=detections, labels=labels)
