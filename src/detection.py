@@ -295,8 +295,6 @@ while True:
 
         if distance_m is not None:
             data = {
-                "class": class_name,
-                "confidence": float(confidence),
                 "distance_m": float(distance_m),
                 "bbox": [int(x1), int(y1), int(x2), int(y2)]
             }
