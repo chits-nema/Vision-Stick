@@ -34,8 +34,8 @@ for i in range(0,20):   # Put the amount of pictures you have taken for the cali
     t= str(i)
     
     #second argument 0 grays the image
-    ChessImaR= cv2.imread('chessboard-R'+t+'.png',0)    # Right side
-    ChessImaL= cv2.imread('chessboard-L'+t+'.png',0)    # Left side
+    ChessImaR= cv2.imread('chessboard-L'+t+'.png',0)    # Right side
+    ChessImaL= cv2.imread('chessboard-R'+t+'.png',0)    # Left side
 
     print("ChessImaR:", type(ChessImaR), ChessImaR.shape if ChessImaR is not None else "None")
 
@@ -158,10 +158,18 @@ retS, MLS, dLS, MRS, dRS, R, T, E, F= cv2.stereoCalibrate(objpoints,
                                                           flags = cv2.CALIB_FIX_INTRINSIC)
 
 # StereoRectify function
-rectify_scale= 0 # if 0 image croped, if 1 image nor croped
+rectify_scale= 1 # if 0 image croped, if 1 image nor croped
 RL, RR, PL, PR, Q, roiL, roiR= cv2.stereoRectify(MLS, dLS, MRS, dRS,
                                                  (wR, hR), R, T,
                                                  rectify_scale,(0,0))
+
+B_estimated = -1 / Q[3, 2]
+print("Baseline according to Q matrix:", B_estimated)
+fx = mtxR[0,0]
+fy = mtxR[1,1]
+f_q = Q[2,3]
+print("Focal length according to mtx:", fx, fy)
+print("Focal length according to Q matrix:", f_q)
 
 # initUndistortRectifyMap function
 Left_Stereo_Map= cv2.initUndistortRectifyMap(MLS, dLS, RL, PL,
@@ -173,8 +181,8 @@ Right_Stereo_Map= cv2.initUndistortRectifyMap(MRS, dRS, RR, PR,
 
 # Create StereoSGBM and prepare all parameters
 window_size = 3
-min_disp = 2
-num_disp = 130-min_disp
+min_disp = 38
+num_disp = 165-min_disp
 stereo = cv2.StereoSGBM_create(minDisparity = min_disp,
     numDisparities = num_disp,
     blockSize = window_size,
@@ -207,7 +215,7 @@ label_annotator = sv.LabelAnnotator()
 names = model.names
 
 camR = cv2.VideoCapture(2)
-camL = cv2.VideoCapture(1)
+camL = cv2.VideoCapture(0)
 
 while True:
     retR, frameR = camR.read()
@@ -224,7 +232,7 @@ while True:
 
     #Compute the 2 images for the depth image
     disp = stereo.compute(grayL, grayR).astype(np.float32)/16
-    dispL = disp                                                                                                                                                                                                                    
+    dispL = disp                                                                                                                                                                          
     dispR = stereoR.compute(grayR, grayL)
     dispL= np.int16(dispL)
     dispR= np.int16(dispR)
@@ -232,69 +240,61 @@ while True:
 
     #Using WLS Filter
     filteredImg = wls_filter.filter(dispL, grayL, None, dispR)
-    #filteredImg = cv2.normalize(src=filteredImg, dst=filteredImg, beta = 0, alpha=255, norm_type = cv2.NORM_MINMAX)
-    #filteredImg = np.uint8(filteredImg)
-    #cv2.imshow('Disparity Map', filteredImg)
-    #disp= ((disp.astype(np.float32)/16)-min_disp)/num_disp  #Calculation allowing us to have 0 for the most distant object able to detect
-
-    #disp_raw = stereo.compute(grayL, grayR).astype(np.float32)
-    #disp_raw = stereo.compute(grayL, grayR).astype(np.float32)
     
     #Map Disparity to 3D World
     points_3D = cv2.reprojectImageTo3D(filteredImg, Q)
 
-    # Resize the image for faster executions
-    #dispR= cv2.resize(disp,None,fx=0.7, fy=0.7, interpolation = cv2.INTER_AREA)
-
-    #Filtering the results with a closing filter
-    #closing = cv2.morphologyEx(disp, cv2.MORPH_CLOSE, kernel)
-
-    #Colors map
-    #dispc = (closing-closing.min())*255
-    #dispC = dispc.astype(np.uint8)
-    #dispColor = cv2.applyColorMap(dispC, cv2.COLORMAP_OCEAN)
-    #filt_Color = cv2.applyColorMap(filteredImg, cv2.COLORMAP_OCEAN)
-
-    #Result for Depth_image
-    #cv2.imshow("Filtered Color Depth", filt_Color)
-
-    results = model(left_nice)[0]
+    results = model(frameL)[0]
     #results = model.predict(stream=True, imgsz=512)
 
     detections = sv.Detections.from_ultralytics(results)
 
-   # Camera calibration -> so we do a pre stream to fill the vector arrays or we count the number of frames 
-   # we then use these to calibrate the corners to get the 2d points 
-
     labels = []
+
+    win_size = 5
     for xyxy, confidence, class_id in zip(detections.xyxy, detections.confidence, detections.class_id):
         class_name = names[int(class_id)]
 
         # bounding box width in pixels 
         x1, y1, x2, y2 = [int(v) for v in xyxy]
-        bbox_points = points_3D[y1:y2, x1:x2, :]
 
-        #Get average distance using the Z values
-        mask = np.isfinite(bbox_points[:, :, 2])
-        valid_Z = bbox_points[:, :, 2][mask]
-        avg_distance = np.median(valid_Z)/1000
-        avg_distance = np.median(valid_Z)/1000
+        #Take Centroid of detected bounding box 
+        cx = (x1 + x2) // 2 
+        cy = (y1 + y2) // 2 
+        point_3D = points_3D[cy, cx, :]
 
+        x_min = max(0, cx - win_size) 
+        x_max = min(points_3D.shape[1] - 1, cx + win_size) 
+        y_min = max(0, cy - win_size) 
+        y_max = min(points_3D.shape[0] - 1, cy + win_size)
+
+        region = points_3D[y_min:y_max, x_min:x_max, :] 
+        X = region[:, :, 0].flatten() 
+        Y = region[:, :, 1].flatten() 
+        Z = region[:, :, 2].flatten()
+
+        valid_mask = np.isfinite(Z)
+
+        Xv, Yv, Zv = X[valid_mask], Y[valid_mask], Z[valid_mask]
+
+        if len(Xv) == 0:
+            distance_m = None
+        else: 
+            dists_vals = np.sqrt(Xv**2 + Yv**2 + Zv**2)
+            distance_m = np.median(dists_vals) / 1000
+        
         confidence_text = f"{confidence:.2f}"
-        label_text = f"{class_name} {confidence_text}, {avg_distance:.2f}m"
+        label_text = f"{class_name} {confidence_text}, {distance_m:.2f}m"
         labels.append(label_text)
 
         #Warning for close objects: ALTER LATER FOR VIBRATION SENSOR
-        if avg_distance and avg_distance < 10:
-            print(f"[WARNING] {class_name} so close: {avg_distance:.1f}m")
+        if distance_m and distance_m < 2:
+            print(f"[WARNING] {class_name} so close: {distance_m:.1f}m")
 
     annotated_frame = box_annotator.annotate(scene=frameL.copy(), detections=detections)
     annotated_image = label_annotator.annotate(scene=annotated_frame, detections=detections, labels=labels)
-    #annotated_dst = box_annotator.annotate(scene= dst.copy(), detections=detections)
-    #annotated_dst_img = label_annotator.annotate(scene=annotated_dst, detections=detections, labels=labels)
 
     cv2.imshow("Object Depth and Detection", annotated_frame)
-    #cv2.imshow("Undistorted", annotated_dst)
 
     if cv2.waitKey(1) == ord('q'):
         break
