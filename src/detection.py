@@ -32,9 +32,12 @@ print('Starting calibration for the 2 cameras... ')
 # Call all saved images
 for i in range(0,64):   # Put the amount of pictures you have taken for the calibration inbetween range(0,?) wenn starting from the image number 0
     t= str(i)
+    
     #second argument 0 grays the image
     ChessImaR= cv2.imread('chessboard-R'+t+'.png',0)    # Right side
     ChessImaL= cv2.imread('chessboard-L'+t+'.png',0)    # Left side
+
+    print("ChessImaR:", type(ChessImaR), ChessImaR.shape if ChessImaR is not None else "None")
 
     # Find the chess board corners
     # If desired number of corners are found in the image then ret = true
@@ -152,13 +155,13 @@ retS, MLS, dLS, MRS, dRS, R, T, E, F= cv2.stereoCalibrate(objpoints,
                                                           distR,
                                                           (wR, hR),
                                                           criteria = criteria_stereo,
-                                                          flags = cv2.CALIB_FIX_INTRINSIC | cv2.CALIB_FIX_ASPECT_RATIO | cv2.CALIB_SAME_FOCAL_LENGTH)
+                                                          flags = cv2.CALIB_FIX_INTRINSIC)
 
 # StereoRectify function
 rectify_scale= 0 # if 0 image croped, if 1 image nor croped
 RL, RR, PL, PR, Q, roiL, roiR= cv2.stereoRectify(MLS, dLS, MRS, dRS,
                                                  (wR, hR), R, T,
-                                                 rectify_scale,(0,0))  # last paramater is alpha, if 0= croped, if 1= not croped
+                                                 rectify_scale,(0,0))
 
 # initUndistortRectifyMap function
 Left_Stereo_Map= cv2.initUndistortRectifyMap(MLS, dLS, RL, PL,
@@ -183,17 +186,17 @@ stereo = cv2.StereoSGBM_create(minDisparity = min_disp,
     P2 = 32*3*window_size**2)
 
 # Used for the filtered image
-#stereoR=cv2.ximgproc.createRightMatcher(stereo) # Create another stereo for right this time
+stereoR=cv2.ximgproc.createRightMatcher(stereo) # Create another stereo for right this time
 
 #STEP 4: APPLY WLS FILTER
 #WLS Parameters
-#lmbda = 80000
-#sigma = 1.8
-#visual_multiplier = 1.0
+lmbda = 80000
+sigma = 1.8
+visual_multiplier = 1.0
  
-#wls_filter = cv2.ximgproc.createDisparityWLSFilter(matcher_left=stereo)
-#wls_filter.setLambda(lmbda)
-#wls_filter.setSigmaColor(sigma)
+wls_filter = cv2.ximgproc.createDisparityWLSFilter(matcher_left=stereo)
+wls_filter.setLambda(lmbda)
+wls_filter.setSigmaColor(sigma)
 
 #STEP 5: START STEREOVISION + CALCULATION OF DEPTH MAP
 
@@ -220,24 +223,24 @@ while True:
     grayL = cv2.cvtColor(left_nice, cv2.COLOR_BGR2GRAY)
 
     #Compute the 2 images for the depth image
-    #disp = stereo.compute(grayL, grayR).astype(np.float32)/16
-    #dispL = disp                                                                                                                                                                                                                    
-    #dispR = stereoR.compute(grayR, grayL)
-    #dispL= np.int16(dispL)
-    #dispR= np.int16(dispR)
+    disp = stereo.compute(grayL, grayR).astype(np.float32)/16
+    dispL = disp                                                                                                                                                                                                                    
+    dispR = stereoR.compute(grayR, grayL)
+    dispL= np.int16(dispL)
+    dispR= np.int16(dispR)
 
 
     #Using WLS Filter
-    #filteredImg = wls_filter.filter(dispL, grayL, None, dispR)
+    filteredImg = wls_filter.filter(dispL, grayL, None, dispR)
     #filteredImg = cv2.normalize(src=filteredImg, dst=filteredImg, beta = 0, alpha=255, norm_type = cv2.NORM_MINMAX)
     #filteredImg = np.uint8(filteredImg)
     #cv2.imshow('Disparity Map', filteredImg)
     #disp= ((disp.astype(np.float32)/16)-min_disp)/num_disp  #Calculation allowing us to have 0 for the most distant object able to detect
 
-    disp_raw = stereo.compute(grayL, grayR).astype(np.float32)
+    #disp_raw = stereo.compute(grayL, grayR).astype(np.float32)
     
     #Map Disparity to 3D World
-    points_3D = cv2.reprojectImageTo3D(disp_raw, Q)
+    points_3D = cv2.reprojectImageTo3D(filteredImg, Q)
 
     # Resize the image for faster executions
     #dispR= cv2.resize(disp,None,fx=0.7, fy=0.7, interpolation = cv2.INTER_AREA)
@@ -273,7 +276,7 @@ while True:
         #Get average distance using the Z values
         mask = np.isfinite(bbox_points[:, :, 2])
         valid_Z = bbox_points[:, :, 2][mask]
-        avg_distance = np.mean(valid_Z)/1000
+        avg_distance = np.median(valid_Z)/1000
 
         confidence_text = f"{confidence:.2f}"
         label_text = f"{class_name} {confidence_text}, {avg_distance:.2f}m"
