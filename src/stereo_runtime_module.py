@@ -2,6 +2,7 @@ import cv2
 import supervision as sv
 from ultralytics import YOLO
 import numpy as np
+import requests
 
 # ----------------- module-level globals (initialized in init_runtime) -----------------
 Left_Stereo_Map = None      # (map1, map2) for left
@@ -91,10 +92,10 @@ def init_runtime(params_path="stereo_params.npz", model_path="yolo11n.pt",
 
     print("[INFO] Runtime initialized (maps/Q loaded, SGBM/WLS/YOLO ready).")
 
-def detect_stereo_vision(frameL, frameR, model_path="yolo11n.pt"):
+def detect_stereo_vision(frameL, frameR, server_url="http://localhost:8000"):
     """
     IMPORTANT: This function no longer re-creates SGBM/WLS/YOLO on every call.
-    Returns: annotated_image, filtered_disparity, last_distance_m
+    Returns: annotated_image, filtered_disparity, distance_m
     """
     assert Left_Stereo_Map is not None and Right_Stereo_Map is not None and Q is not None, \
         "Call init_runtime(...) before detect_stereo_vision(...)"
@@ -124,8 +125,7 @@ def detect_stereo_vision(frameL, frameR, model_path="yolo11n.pt"):
     results = model(frameL)[0]
     detections = sv.Detections.from_ultralytics(results)
 
-    labels = []
-    last_distance_m = None  
+    labels = [] 
 
     win_size = 5
     for xyxy, confidence, class_id in zip(detections.xyxy, detections.confidence, detections.class_id):
@@ -167,4 +167,26 @@ def detect_stereo_vision(frameL, frameR, model_path="yolo11n.pt"):
     annotated_frame = box_annotator.annotate(scene=frameL.copy(), detections=detections)
     annotated_image = label_annotator.annotate(scene=annotated_frame, detections=detections, labels=labels)
 
-    return annotated_image, filteredImg, distance_m
+    try:
+        payload = {
+            "annotated_image": annotated_image.tolist(),
+            "filtered_image": filteredImg.tolist(),
+            "distance_m": distance_m
+        }
+
+        response = requests.post(
+            f"{server_url}/process_frame",
+            json=payload,
+            timeout=5,
+            verify=False  # For self-signed certificates
+        )
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"Server error: {response.status_code}")
+            return None
+            
+    except requests.exceptions.RequestException as e:
+        print(f"Connection error: {e}")
+        return None
