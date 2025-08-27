@@ -95,7 +95,7 @@ def init_runtime(params_path="stereo_params.npz", model_path="yolo11n.pt",
 def detect_stereo_vision(frameL, frameR):
     """
     IMPORTANT: This function no longer re-creates SGBM/WLS/YOLO on every call.
-    Returns: annotated_image, filtered_disparity, distance_m
+    Returns: annotated_image, filtered_disparity, last_distance_m
     """
     assert Left_Stereo_Map is not None and Right_Stereo_Map is not None and Q is not None, \
         "Call init_runtime(...) before detect_stereo_vision(...)"
