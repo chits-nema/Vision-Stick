@@ -6,7 +6,7 @@ import socket
 import json
 import requests
 
-SERVER_URL = "http://localhost:8000/predict" #replace with actual IP
+#SERVER_URL = "http://localhost:8000/predict" #replace with actual IP
 
 #Filtering
 kernel= np.ones((3,3),np.uint8)
@@ -182,53 +182,46 @@ Left_Stereo_Map= cv2.initUndistortRectifyMap(MLS, dLS, RL, PL,
 Right_Stereo_Map= cv2.initUndistortRectifyMap(MRS, dRS, RR, PR,
                                               (wR, hR), cv2.CV_16SC2)
 
-#STEP 3: CREATION OF DISPARITY MAP
 
-# Create StereoSGBM and prepare all parameters
-window_size = 3
-min_disp = 38
-num_disp = 165-min_disp
-stereo = cv2.StereoSGBM_create(minDisparity = min_disp,
-    numDisparities = num_disp,
-    blockSize = window_size,
-    uniquenessRatio = 10,
-    speckleWindowSize = 100,
-    speckleRange = 32,
-    disp12MaxDiff = 5,
-    P1 = 8*3*window_size**2,
-    P2 = 32*3*window_size**2)
+#********************************************
+#********** Stereo Vision Section ************
+#********************************************
 
-# Used for the filtered image
-stereoR=cv2.ximgproc.createRightMatcher(stereo) # Create another stereo for right this time
 
-#STEP 4: APPLY WLS FILTER
-#WLS Parameters
-lmbda = 80000
-sigma = 1.8
-visual_multiplier = 1.0
+def detect_stereo_vision(frameL, frameR, model_path="yolo11n.pt"):
+
+    # STEP 3: Create StereoSGBM and prepare all parameters
+    window_size = 3
+    min_disp = 38
+    num_disp = 165-min_disp
+    stereo = cv2.StereoSGBM_create(minDisparity = min_disp,
+        numDisparities = num_disp,
+        blockSize = window_size,
+        uniquenessRatio = 10,
+        speckleWindowSize = 100,
+        speckleRange = 32,
+        disp12MaxDiff = 5,
+        P1 = 8*3*window_size**2,
+        P2 = 32*3*window_size**2)
+
+    # Used for the filtered image
+    stereoR=cv2.ximgproc.createRightMatcher(stereo) # Create another stereo for right this time
+
+    #STEP 4: APPLY WLS FILTER
+    #WLS Parameters
+    lmbda = 80000
+    sigma = 1.8
+    visual_multiplier = 1.0
  
-wls_filter = cv2.ximgproc.createDisparityWLSFilter(matcher_left=stereo)
-wls_filter.setLambda(lmbda)
-wls_filter.setSigmaColor(sigma)
+    wls_filter = cv2.ximgproc.createDisparityWLSFilter(matcher_left=stereo)
+    wls_filter.setLambda(lmbda)
+    wls_filter.setSigmaColor(sigma)
 
-#STEP 5: START STEREOVISION + CALCULATION OF DEPTH MAP
-
-model = YOLO("yolo11n.pt")
-
-box_annotator = sv.BoxAnnotator()
-label_annotator = sv.LabelAnnotator()
-names = model.names
-
-camR = cv2.VideoCapture(2)
-camL = cv2.VideoCapture(0)
-
-
-while True:
-    retR, frameR = camR.read()
-    retL, frameL = camL.read()
-    if not retR or not retL: 
-        break
-
+    #STEP 5: START STEREOVISION + CALCULATION OF DEPTH MAP
+    model = YOLO(model_path)
+    box_annotator = sv.BoxAnnotator()
+    label_annotator = sv.LabelAnnotator()
+    names = model.names
     left_nice = cv2.remap(frameL, Left_Stereo_Map[0], Left_Stereo_Map[1], interpolation = cv2.INTER_LANCZOS4, borderMode = cv2.BORDER_CONSTANT)
     right_nice = cv2.remap(frameR, Right_Stereo_Map[0], Right_Stereo_Map[1], interpolation = cv2.INTER_LANCZOS4, borderMode = cv2.BORDER_CONSTANT)
 
@@ -267,7 +260,7 @@ while True:
         #Take Centroid of detected bounding box 
         cx = (x1 + x2) // 2 
         cy = (y1 + y2) // 2 
-        point_3D = points_3D[cy, cx, :]
+        #point_3D = points_3D[cy, cx, :]
 
         x_min = max(0, cx - win_size) 
         x_max = min(points_3D.shape[1] - 1, cx + win_size) 
@@ -293,34 +286,30 @@ while True:
         label_text = f"{class_name} {confidence_text}, {distance_m:.2f}m"
         labels.append(label_text)
 
-        if distance_m is not None:
-            data = {
-                "distance_m": float(distance_m),
-                "bbox": [int(x1), int(y1), int(x2), int(y2)]
-            }
-            try: 
-                response = requests.post(SERVER_URL, json=data, timeout=5, verify=False) #Disable verify if using self-signed certificates
-                if response.status_code == 200:
-                    print("Data sent successfully")
-                else:
-                    print(f"Failed to send data, status code: {response.status_code}")
-            except requests.exceptions.RequestException as e:
-                print(f"Error sending data: {e}")
+        #if distance_m is not None:
+        #    data = {
+        #        "distance_m": float(distance_m),
+        #        "bbox": [int(x1), int(y1), int(x2), int(y2)]
+        #    }
+        #    try: 
+        #        response = requests.post(SERVER_URL, json=data, timeout=5, verify=False) #Disable verify if using self-signed certificates
+        #        if response.status_code == 200:
+        #            print("Data sent successfully")
+        #        else:
+        #            print(f"Failed to send data, status code: {response.status_code}")
+        #    except requests.exceptions.RequestException as e:
+        #        print(f"Error sending data: {e}")
 
     annotated_frame = box_annotator.annotate(scene=frameL.copy(), detections=detections)
     annotated_image = label_annotator.annotate(scene=annotated_frame, detections=detections, labels=labels)
+    #cv2.imshow("Object Depth and Detection", annotated_frame)
 
-    cv2.imshow("Object Depth and Detection", annotated_frame)
+    #if cv2.waitKey(1) == ord('q'):
+    #    break #Break can only be used in a loop
 
-    if cv2.waitKey(1) == ord('q'):
-        break
+    #for r in results: 
+    #    for c in r.boxes.cls:
+    #        print(names[int(c)])
 
-    for r in results: 
-        for c in r.boxes.cls:
-            print(names[int(c)])
-
-
-camL.release()
-camR.release()
-cv2.destroyAllWindows()
+    return annotated_image, filteredImg, distance_m
 
