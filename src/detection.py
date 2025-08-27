@@ -4,6 +4,9 @@ from ultralytics import YOLO
 import numpy as np
 import socket
 import json
+import requests
+
+SERVER_URL = "http://localhost:8000/predict" #replace with actual IP
 
 #Filtering
 kernel= np.ones((3,3),np.uint8)
@@ -219,9 +222,6 @@ names = model.names
 camR = cv2.VideoCapture(2)
 camL = cv2.VideoCapture(0)
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-sock.connect(("localhost", 65432))  # Connect to the correct port
-
 
 while True:
     retR, frameR = camR.read()
@@ -298,8 +298,14 @@ while True:
                 "distance_m": float(distance_m),
                 "bbox": [int(x1), int(y1), int(x2), int(y2)]
             }
-            json_data = json.dumps(data)
-            sock.sendall(json_data.encode('utf-8'))
+            try: 
+                response = requests.post(SERVER_URL, json=data, timeout=5, verify=False) #Disable verify if using self-signed certificates
+                if response.status_code == 200:
+                    print("Data sent successfully")
+                else:
+                    print(f"Failed to send data, status code: {response.status_code}")
+            except requests.exceptions.RequestException as e:
+                print(f"Error sending data: {e}")
 
     annotated_frame = box_annotator.annotate(scene=frameL.copy(), detections=detections)
     annotated_image = label_annotator.annotate(scene=annotated_frame, detections=detections, labels=labels)
