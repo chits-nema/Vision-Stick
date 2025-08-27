@@ -1,210 +1,412 @@
-# gaming_laptop_server.py
+import os
+import ssl
 import cv2
+import time
+import base64
+import signal
+import threading
+import numpy as np
+from queue import Queue
+from typing import Dict, Any, List, Tuple, Optional
+from flask import Flask, request, jsonify
+
 import supervision as sv
 from ultralytics import YOLO
-import base64
-import numpy as np
-from flask import Flask, request, jsonify
-import ssl
-import threading
-import time
-from io import BytesIO
 
-app = Flask(__name__)
+import stereo_runtime_module as stereo
+import calibration_module as calib
 
-class YOLOProcessor:
+# =======================
+# Display Manager (small always-on-top preview)
+# =======================
+class DisplayManager:
+    """
+    Small, always-on-top window that shows the most recent (composited) frame.
+    Runs in its own thread and never blocks Flask request handling.
+    """
+    def __init__(self, window_name="Pi Stereo Stream", width=640, always_on_top=True):
+        self.window_name = window_name
+        self.width = int(width)
+        self.always_on_top = bool(always_on_top)
+        self._q = Queue(maxsize=1)   # keep only the latest frame
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self):
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, name="DisplayManager", daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+
+    def show(self, frame_bgr: np.ndarray):
+        """Offer a new frame to display (drop previous if queue is full)."""
+        if not self._running:
+            return
+        try:
+            if not self._q.empty():
+                self._q.get_nowait()
+            self._q.put_nowait(frame_bgr)
+        except Exception:
+            pass
+
+    def _loop(self):
+        # try to open a window; if headless, silently stop
+        try:
+            cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(self.window_name, self.width, int(self.width * 9 / 16))
+            try:
+                cv2.setWindowProperty(
+                    self.window_name,
+                    cv2.WND_PROP_TOPMOST,
+                    1.0 if self.always_on_top else 0.0
+                )
+            except Exception:
+                pass
+        except Exception:
+            self._running = False
+            return
+
+        last = None
+        while self._running:
+            try:
+                if not self._q.empty():
+                    last = self._q.get(timeout=0.02)
+                if last is not None:
+                    h, w = last.shape[:2]
+                    scale = self.width / float(w)
+                    preview = cv2.resize(last, (self.width, int(h * scale)))
+                    cv2.imshow(self.window_name, preview)
+
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):  # close preview thread
+                    self.stop()
+                elif key == ord('1'):  # toggle always-on-top
+                    self.always_on_top = not self.always_on_top
+                    try:
+                        cv2.setWindowProperty(
+                            self.window_name,
+                            cv2.WND_PROP_TOPMOST,
+                            1.0 if self.always_on_top else 0.0
+                        )
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        try:
+            cv2.destroyWindow(self.window_name)
+        except Exception:
+            pass
+
+
+# =======================
+# YOLO Processor
+# =======================
+"""class YOLOProcessor:
     def __init__(self, model_path="yolo11n.pt"):
         self.model = YOLO(model_path)
         self.names = self.model.names
         self.box_annotator = sv.BoxAnnotator()
         self.label_annotator = sv.LabelAnnotator()
-        
-        # Performance tracking
-        self.frame_count = 0
+
+        # performance
+        self.frame_count_total = 0
+        self.sum_processing_total = 0.0
         self.start_time = time.time()
-        self.processing_times = []
-        
-        print(f"YOLO model loaded: {model_path}")
-        print(f"Available classes: {len(self.names)}")
-    
-    def decode_frame(self, frame_data, frame_shape):
-        """Decode base64 frame back to numpy array"""
+
+        # serialize GPU work across concurrent Flask threads
+        self._lock = threading.Lock()
+
+        print(f"[INFO] YOLO model loaded: {model_path} ({len(self.names)} classes)")
+
+    @staticmethod
+    def decode_b64_jpeg(b64_str: str) -> Optional[np.ndarray]:
         try:
-            # Decode base64
-            frame_bytes = base64.b64decode(frame_data)
-            
-            # Convert to numpy array
-            nparr = np.frombuffer(frame_bytes, np.uint8)
-            
-            # Decode JPEG
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            
+            buf = base64.b64decode(b64_str)
+            arr = np.frombuffer(buf, np.uint8)
+            frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
             return frame
-        except Exception as e:
-            print(f"Frame decode error: {e}")
+        except Exception:
             return None
-    
-    def process_frame(self, frame):
-        """Process frame with YOLO and return results"""
-        start_time = time.time()
-        
+
+    def _annotate(self, frame_bgr: np.ndarray, detections: sv.Detections) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
+        labels = [
+            f"{self.names[cid]} {conf:.2f}"
+            for cid, conf in zip(detections.class_id, detections.confidence)
+        ]
+        img = self.box_annotator.annotate(scene=frame_bgr.copy(), detections=detections)
+        img = self.label_annotator.annotate(scene=img, detections=detections, labels=labels)
+
+        det_info = []
+        for cid, conf, bbox in zip(detections.class_id, detections.confidence, detections.xyxy):
+            det_info.append({
+                "class": self.names[cid],
+                "confidence": float(conf),
+                "bbox": [float(x) for x in bbox.tolist()]  # xyxy
+            })
+        return img, det_info
+
+    def process_one(self, frame_bgr: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
+        t0 = time.time()
         try:
-            # Run YOLO inference
-            results = self.model(frame)[0]
-            
-            # Convert to supervision format
-            detections = sv.Detections.from_ultralytics(results)
-            
-            # Create labels
-            labels = [
-                f"{self.names[class_id]} {confidence:.2f}"
-                for class_id, confidence
-                in zip(detections.class_id, detections.confidence)
-            ]
-            
-            # Annotate frame
-            annotated_frame = self.box_annotator.annotate(
-                scene=frame.copy(), detections=detections
-            )
-            annotated_image = self.label_annotator.annotate(
-                scene=annotated_frame, detections=detections, labels=labels
-            )
-            
-            # Extract detection info
-            detection_info = []
-            for i, (class_id, confidence, bbox) in enumerate(zip(
-                detections.class_id, detections.confidence, detections.xyxy
-            )):
-                detection_info.append({
-                    'class': self.names[class_id],
-                    'confidence': float(confidence),
-                    'bbox': bbox.tolist()
-                })
-            
-            # Performance tracking
-            processing_time = time.time() - start_time
-            self.processing_times.append(processing_time)
-            self.frame_count += 1
-            
-            # Display annotated frame
-            cv2.imshow("YOLO Detection Server", annotated_frame)
-            if cv2.waitKey(1) == ord('q'):
-                return None
-            
-            # Print detections to console (matching your original code)
-            for detection in detection_info:
-                print(f"{detection['class']} ({detection['confidence']:.2f})")
-            
-            return {
-                'detections': detection_info,
-                'processing_time': processing_time,
-                'total_frames': self.frame_count
+            with self._lock:
+                result = self.model(frame_bgr)[0]
+            detections = sv.Detections.from_ultralytics(result)
+            annotated, det_info = self._annotate(frame_bgr, detections)
+
+            dt = time.time() - t0
+            self.sum_processing_total += dt
+            self.frame_count_total += 1
+
+            return annotated, {
+                "detections": det_info,
+                "processing_time": dt
             }
-            
         except Exception as e:
-            print(f"Processing error: {e}")
-            return {'error': str(e)}
-    
-    def get_stats(self):
-        """Get performance statistics"""
-        if not self.processing_times:
+            return frame_bgr, {"error": str(e)}
+
+    def stats(self) -> Dict[str, Any]:
+        if self.frame_count_total == 0:
             return {}
-        
-        elapsed_time = time.time() - self.start_time
-        avg_fps = self.frame_count / elapsed_time if elapsed_time > 0 else 0
-        avg_processing_time = np.mean(self.processing_times)
-        
+        elapsed = time.time() - self.start_time
         return {
-            'frames_processed': self.frame_count,
-            'average_fps': avg_fps,
-            'average_processing_time': avg_processing_time,
-            'elapsed_time': elapsed_time
+            "frames_processed_total": self.frame_count_total,
+            "avg_processing_time": self.sum_processing_total / self.frame_count_total,
+            "avg_fps_since_start": self.frame_count_total / elapsed if elapsed > 0 else 0.0,
+            "elapsed_time_sec": elapsed
+        }
+"""
+
+class StereoVisionProcessor:
+    def __init__(self, params_path="stereo_params.npz", model_path="yolo11n.pt"):
+        calib.run_calibration_and_save(output_path=params_path)
+        stereo._build_matchers()
+        stereo.init_runtime(params_path=params_path, model_path=model_path)
+
+        #Performance Tracking
+        self.frame_count_total = 0
+        self.sum_processing_total = 0.0
+        self.start_time = time.time()
+
+        #Seralize GPU work across concurrent Flask threads
+        self._lock = threading.Lock()
+
+        print(f"[INFO] StereoVisionProcessor initialized with params: {params_path} and model: {model_path}")
+
+    @staticmethod
+    def decode_b64_jpeg(b64_str: str) -> Optional[np.ndarray]:
+        try:
+            buf = base64.b64decode(b64_str)
+            arr = np.frombuffer(buf, np.uint8)
+            frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            return frame
+        except Exception:
+            return None
+    def process_stereo(self, frameL: np.ndarray, frameR: np.ndarray) -> Dict[str, Any]:
+        t0 = time.time()
+        try:
+            with self._lock:
+                payload = stereo.detect_stereo_vision(frameL, frameR)
+
+            dt = time.time() - t0
+            self.sum_processing_total += dt
+            self.frame_count_total += 1
+
+            payload["processing_time"] = dt
+            return payload
+        except Exception as e:
+            return {"error": str(e)}
+    
+    def stats(self) -> Dict[str, Any]:
+        if self.frame_count_total == 0:
+            return {}
+        elapsed = time.time() - self.start_time
+        return {
+            "frames_processed_total": self.frame_count_total,
+            "avg_processing_time": self.sum_processing_total / self.frame_count_total,
+            "avg_fps_since_start": self.frame_count_total / elapsed if elapsed > 0 else 0.0,
+            "elapsed_time_sec": elapsed
         }
 
-# Global processor instance
-processor = YOLOProcessor()
+# =======================
+# Utilities
+# =======================
+def hstack_pad(l: np.ndarray, r: np.ndarray, pad: int = 6, pad_color=(30, 30, 30)) -> np.ndarray:
+    """Side-by-side composition with a thin separator."""
+    h = max(l.shape[0], r.shape[0])
+    def fit_h(x):
+        if x.shape[0] == h:
+            return x
+        scale = h / float(x.shape[0])
+        w = int(x.shape[1] * scale)
+        return cv2.resize(x, (w, h))
+    l2 = fit_h(l)
+    r2 = fit_h(r)
+    sep = np.full((h, pad, 3), pad_color, dtype=np.uint8)
+    return np.hstack([l2, sep, r2])
 
-@app.route('/process_frame', methods=['POST'])
+def mono_or_stereo_preview(imgL: Optional[np.ndarray], imgR: Optional[np.ndarray]) -> np.ndarray:
+    if imgL is not None and imgR is not None:
+        return hstack_pad(imgL, imgR, pad=8)
+    return imgL if imgL is not None else imgR
+
+# =======================
+# Flask App
+# =======================
+app = Flask(__name__)
+
+processor = StereoVisionProcessor()
+display = DisplayManager(window_name="YOLO Stereo Preview", width=640, always_on_top=True)
+display.start()
+
+@app.route("/process_frame", methods=["POST"])
 def process_frame():
-    """API endpoint to process frames"""
+    """
+    Accepts:
+      - Stereo JSON: {
+          "frameL": "<b64 JPEG>", "frameR": "<b64 JPEG>",
+          "shapeL": [h, w], "shapeR": [h, w],
+          "timestamp": <float>
+        }
+      - OR Mono JSON: { "frame": "<b64 JPEG>", "timestamp": <float> }
+    Returns detections/timings for left/right (if present).
+    Also updates a small preview window with the latest annotated frame(s).
+    """
+
+    global L, R
     try:
-        data = request.json
-        frame_data = data.get('frame')
-        frame_shape = data.get('shape')
-        
-        if not frame_data:
-            return jsonify({'error': 'No frame data provided'}), 400
-        
-        # Decode frame
-        frame = processor.decode_frame(frame_data, frame_shape)
-        if frame is None:
-            return jsonify({'error': 'Failed to decode frame'}), 400
-        
-        # Process frame
-        result = processor.process_frame(frame)
-        if result is None:
-            return jsonify({'shutdown': True}), 200
-        
-        return jsonify(result)
-        
+        data = request.get_json(force=True, silent=False)
+
+        frameL_b64 = data.get("frameL")
+        frameR_b64 = data.get("frameR")
+        mono_b64   = data.get("frame")
+
+        annL = annR = None
+        resL: Dict[str, Any] = {}
+        resR: Dict[str, Any] = {}
+
+        if frameL_b64 or frameR_b64:  # stereo path
+            if frameL_b64:
+                L = processor.decode_b64_jpeg(frameL_b64)
+                if L is None:
+                    return jsonify({"error": "Failed to decode frameL"}), 400
+                annL, resL = processor.process_one(L)
+            if frameR_b64:
+                R = processor.decode_b64_jpeg(frameR_b64)
+                if R is None:
+                    return jsonify({"error": "Failed to decode frameR"}), 400
+                annR, resR = processor.process_one(R)
+
+            preview = mono_or_stereo_preview(annL, annR)
+            if preview is not None:
+                display.show(preview)
+
+            return jsonify({
+                "mode": "stereo",
+                "left": resL if frameL_b64 else None,
+                "right": resR if frameR_b64 else None,
+            }), 200
+
+        elif mono_b64:  # mono path (backward compatible)
+            M = processor.decode_b64_jpeg(mono_b64)
+            if M is None:
+                return jsonify({"error": "Failed to decode frame"}), 400
+            annM, resM = processor.process_one(M)
+            display.show(annM)
+            return jsonify({
+                "mode": "mono",
+                "result": resM
+            }), 200
+
+        else:
+            return jsonify({"error": "No frame payload provided"}), 400
+
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/stats', methods=['GET'])
-def get_stats():
-    """API endpoint to get processing statistics"""
-    return jsonify(processor.get_stats())
+@app.route("/stats", methods=["GET"])
+def stats():
+    return jsonify(processor.stats())
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint"""
-    return jsonify({'status': 'healthy', 'model_loaded': True})
+@app.route("/health", methods=["GET"])
+def health():
+    gpu_info = "CPU only"
+    try:
+        cnt = cv2.cuda.getCudaEnabledDeviceCount()
+        gpu_info = [f"cuda:{i}" for i in range(cnt)] if cnt > 0 else "CPU only"
+    except Exception:
+        pass
+    return jsonify({"status": "healthy", "model_loaded": True, "opencv_gpu": gpu_info})
 
-def create_ssl_context():
-    """Create SSL context for HTTPS"""
+
+# =======================
+# TLS (self-signed)
+# =======================
+def create_ssl_context() -> ssl.SSLContext:
+    """
+    Create HTTPS context. If server.crt/key not present, generate a self-signed one.
+    """
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
-    
-    # Generate self-signed certificate if needed
-    try:
-        context.load_cert_chain('server.crt', 'server.key')
-    except FileNotFoundError:
-        print("SSL certificates not found. Generating self-signed certificate...")
-        generate_self_signed_cert()
-        context.load_cert_chain('server.crt', 'server.key')
-    
+
+    crt = "server.crt"
+    key = "server.key"
+
+    if not (os.path.exists(crt) and os.path.exists(key)):
+        print("[INFO] SSL certificates not found. Generating self-signed cert (requires openssl)…")
+        _generate_self_signed_cert(crt, key)
+
+    context.load_cert_chain(crt, key)
     return context
 
-def generate_self_signed_cert():
-    """Generate self-signed SSL certificate"""
+def _generate_self_signed_cert(crt_path: str, key_path: str):
     import subprocess
-    import os
-    
-    if not os.path.exists('server.crt'):
-        cmd = [
-            'openssl', 'req', '-x509', '-newkey', 'rsa:4096', '-nodes',
-            '-out', 'server.crt', '-keyout', 'server.key', '-days', '365',
-            '-subj', '/C=US/ST=State/L=City/O=Organization/OU=Unit/CN=localhost'
-        ]
-        
-        try:
-            subprocess.run(cmd, check=True, capture_output=True)
-            print("Self-signed certificate generated successfully")
-        except subprocess.CalledProcessError as e:
-            print(f"Failed to generate certificate: {e}")
-            print("Please install OpenSSL or provide your own SSL certificates")
+    subj = "/C=DE/ST=BW/L=Karlsruhe/O=PiStereo/OU=Video/CN=localhost"
+    cmd = [
+        "openssl", "req", "-x509", "-newkey", "rsa:4096", "-nodes",
+        "-out", crt_path, "-keyout", key_path, "-days", "365",
+        "-subj", subj
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+        print("[INFO] Self-signed certificate generated.")
+    except Exception as e:
+        print(f"[WARN] Could not auto-generate certs: {e}")
+        print("      Provide server.crt and server.key manually or install OpenSSL.")
+
+
+# =======================
+# Main
+# =======================
+def _handle_sig(*_):
+    try:
+        display.stop()
+    except Exception:
+        pass
+    # Flask dev server exits on next loop
 
 if __name__ == "__main__":
-    print("Starting YOLO Processing Server...")
-    print("Available GPU devices:", [f"cuda:{i}" for i in range(cv2.cuda.getCudaEnabledDeviceCount())] if cv2.cuda.getCudaEnabledDeviceCount() > 0 else "CPU only")
-    
-    # Create SSL context
+    print("[INFO] Starting Stereo YOLO Server…")
+    try:
+        cnt = cv2.cuda.getCudaEnabledDeviceCount()
+        print("[INFO] OpenCV CUDA devices:",
+              [f"cuda:{i}" for i in range(cnt)] if cnt > 0 else "CPU only")
+    except Exception:
+        print("[INFO] OpenCV CUDA devices: unavailable (OpenCV not built with CUDA)")
+
+    signal.signal(signal.SIGINT, _handle_sig)
+    signal.signal(signal.SIGTERM, _handle_sig)
+
     ssl_context = create_ssl_context()
-    
-    # Start server
+
+    # threaded=True allows overlapping requests; GPU work is serialized via a lock
     app.run(
-        host='0.0.0.0',  # Listen on all interfaces
+        host="0.0.0.0",
         port=8443,
         ssl_context=ssl_context,
         threaded=True,
