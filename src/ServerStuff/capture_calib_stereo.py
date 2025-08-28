@@ -1,0 +1,73 @@
+import numpy as np
+import cv2
+from picamera2 import Picamera2
+
+print('Starting the Calibration. Press and maintain the space bar to exit the script\n')
+print('Push (s) to save the image you want andw push (c) to see next frame without saving the image')
+
+id_image=0
+ 
+# termination criteria
+criteria =(cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+
+# Call the two cameras
+#CamR= cv2.VideoCapture(2)   # 1 -> Right Camera
+#CamL= cv2.VideoCapture(1)   # 2 -> Left Camera
+
+#Force both cameras to have the same resolution
+#CamL.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+#CamL.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+#CamR.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+#CamR.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+picamR = Picamera2(1)  # Right Camera
+picamL = Picamera2(0)  # Left Camera
+
+while True:
+    #retR, frameR= CamR.read()
+    #retL, frameL= CamL.read()
+
+    frameR_rgb = picamR.capture_array()
+    frameL_rgb = picamL.capture_array()
+    frameR = cv2.cvtColor(frameR_rgb, cv2.COLOR_RGB2BGR)
+    frameL = cv2.cvtColor(frameL_rgb, cv2.COLOR_RGB2BGR)
+    retR, retL = True, True
+
+    grayR= cv2.cvtColor(frameR,cv2.COLOR_BGR2GRAY)
+    grayL= cv2.cvtColor(frameL,cv2.COLOR_BGR2GRAY)
+
+    # Find the chess board corners
+    retR, cornersR = cv2.findChessboardCorners(grayR,(7,5),None)  # Define the number of chess corners (here 8 by 5) we are looking for with the right Camera
+    retL, cornersL = cv2.findChessboardCorners(grayL, (7,5),None)  # Same with the left camera
+    cv2.imshow('imgR',frameR)
+    cv2.imshow('imgL',frameL)
+
+    # If found, add object points, image points (after refining them)
+    if (retR == True) & (retL == True):
+        corners2R= cv2.cornerSubPix(grayR,cornersR,(11,11),(-1,-1),criteria)    # Refining the Position
+        corners2L= cv2.cornerSubPix(grayL,cornersL,(11,11),(-1,-1),criteria)
+
+        # Draw and display the corners
+        cv2.drawChessboardCorners(grayR,(7,5),corners2R,retR)
+        cv2.drawChessboardCorners(grayL,(7,5),corners2L,retL)
+        cv2.imshow('VideoR',grayR)
+        cv2.imshow('VideoL',grayL)
+
+        if cv2.waitKey(0) & 0xFF == ord('s'):   # Push "s" to save the images and "c" if you don't want to
+            str_id_image= str(id_image)
+            print('Images ' + str_id_image + ' saved for right and left cameras')
+            cv2.imwrite('chessboard-R'+str_id_image+'.png',frameR) # Save the image in the file where this Programm is located
+            cv2.imwrite('chessboard-L'+str_id_image+'.png',frameL)
+            id_image=id_image+1
+        else:
+            print('Images not saved')
+
+    # End the Programme
+    if cv2.waitKey(1) & 0xFF == ord(' '):   # Push the space bar and maintan to exit this Programm
+        break
+
+# Release the Cameras
+picamR.stop() 
+picamL.stop()
+cv2.destroyAllWindows()
