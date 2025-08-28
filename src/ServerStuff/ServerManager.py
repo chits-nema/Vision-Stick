@@ -1,3 +1,4 @@
+# servermanager.py
 import os
 import ssl
 import cv2
@@ -7,7 +8,7 @@ import signal
 import threading
 import numpy as np
 from queue import Queue
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from flask import Flask, request, jsonify
 
 import StereoRuntime as stereo
@@ -19,7 +20,7 @@ import CalibrationModule as calib
 # =======================
 class DisplayManager:
     """
-    Small, always-on-top window that shows the most recent (composited) frame.
+    Small, always-on-top window that shows the most recent (annotated) frame.
     Runs in its own thread and never blocks Flask request handling.
     """
 
@@ -102,8 +103,56 @@ class DisplayManager:
             pass
 
 
+# =======================
+# Vision result cache (served to Pi via /vision_receiver)
+# =======================
+class VisionCache:
+    """
+    Thread-safe cache of the latest 'vision result' the Pi will GET from /vision_receiver.
+    Fields:
+      - ts: server timestamp (float)
+      - distance_m: Optional[float] (None if unknown)
+      - bbox: Optional[List[float]] = [x1,y1,x2,y2] in pixels
+      - frame_w: Optional[int] (width of the frame used for bbox)
+    """
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._data: Dict[str, Any] = {
+            "ts": 0.0,
+            "distance_m": None,
+            "bbox": None,
+            "frame_w": None,
+        }
+
+    def update(self, *, distance_m: Optional[float], bbox: Optional[List[float]], frame_w: Optional[int]) -> None:
+        with self._lock:
+            self._data = {
+                "ts": time.time(),
+                "distance_m": float(distance_m) if isinstance(distance_m, (int, float)) else None,
+                "bbox": [float(x) for x in bbox] if (isinstance(bbox, (list, tuple)) and len(bbox) == 4) else None,
+                "frame_w": int(frame_w) if isinstance(frame_w, (int, float)) else None,
+            }
+
+    def snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            return dict(self._data)
+
+
+# =======================
+# Stereo Vision Processor
+# =======================
 class StereoVisionProcessor:
+    """
+    Wraps calibration + stereo + runtime. The runtime function
+    stereo.detect_stereo_vision(frameL, frameR) MUST return a payload dict containing:
+      - 'annotated_image' : list (HxWx3, uint8)  -> we display it
+      - 'filtered_image'  : list (optional)
+      - 'distance_m'      : float|None          -> distance for PRIMARY bbox
+      - 'bbox'            : [x1,y1,x2,y2]|None  -> PRIMARY bbox on LEFT frame
+      - 'detections'      : list (optional summaries per detection)
+    """
     def __init__(self, params_path="stereo_params.npz", model_path="yolo11n.pt"):
+        # Prepare calibration + stereo + runtime
         calib.run_calibration_and_save(output_path=params_path)
         stereo._build_matchers()
         stereo.init_runtime(params_path=params_path, model_path=model_path)
@@ -132,6 +181,7 @@ class StereoVisionProcessor:
         t0 = time.time()
         try:
             with self._lock:
+                # Runtime returns dict with distance_m and bbox now
                 payload = stereo.detect_stereo_vision(frameL, frameR)
             dt = time.time() - t0
             self.sum_processing_total += dt
@@ -152,27 +202,25 @@ class StereoVisionProcessor:
             "elapsed_time_sec": elapsed
         }
 
+
 # =======================
 # Utilities
 # =======================
-def hstack_pad(l: np.ndarray, r: np.ndarray, pad: int = 6, pad_color=(30, 30, 30)) -> np.ndarray:
-    """Side-by-side composition with a thin separator."""
-    h = max(l.shape[0], r.shape[0])
-    def fit_h(x):
-        if x.shape[0] == h:
-            return x
-        scale = h / float(x.shape[0])
-        w = int(x.shape[1] * scale)
-        return cv2.resize(x, (w, h))
-    l2 = fit_h(l)
-    r2 = fit_h(r)
-    sep = np.full((h, pad, 3), pad_color, dtype=np.uint8)
-    return np.hstack([l2, sep, r2])
-
-def mono_or_stereo_preview(imgL: Optional[np.ndarray], imgR: Optional[np.ndarray]) -> np.ndarray:
-    if imgL is not None and imgR is not None:
-        return hstack_pad(imgL, imgR, pad=8)
-    return imgL if imgL is not None else imgR
+def _tolist_to_np_uint8(img_like) -> Optional[np.ndarray]:
+    """Convert a list-based image (H x W x 3) back to np.uint8 BGR if possible."""
+    if img_like is None:
+        return None
+    try:
+        arr = np.array(img_like, dtype=np.uint8)
+        # basic sanity
+        if arr.ndim == 3 and arr.shape[2] in (3, 4):
+            if arr.shape[2] == 4:
+                # If RGBA slipped in, drop A for display
+                arr = arr[:, :, :3]
+            return arr
+    except Exception:
+        pass
+    return None
 
 
 # =======================
@@ -181,18 +229,19 @@ def mono_or_stereo_preview(imgL: Optional[np.ndarray], imgR: Optional[np.ndarray
 app = Flask(__name__)
 
 processor = StereoVisionProcessor()
-# StereoRuntime returns a single annotated left image; keep a single-window preview
 display = DisplayManager(window_name="YOLO Stereo Preview", width=640, always_on_top=True)
 display.start()
+vision_cache = VisionCache()
 
 
 @app.route("/process_frame", methods=["POST"])
 def process_frame():
     """
-    Accepts stereo JSON: {"frameL": "<b64 JPEG>", "frameR": "<b64 JPEG>"}
-
-    Minimal fix: use StereoVisionProcessor.process_stereo and forward its
-    detections + distance back to the client (no YOLO-only paths).
+    Accepts stereo JSON: {"frameL": "<b64 JPEG>", "frameR": "<b64 JPEG>"}.
+    Processes frames, updates the preview window, and:
+      1) Returns distance + bbox in the HTTP response, and
+      2) Updates a server-side cache that the Pi polls via GET /vision_receiver
+         (contains distance_m, bbox, and frame_w for bias logic).
     """
     try:
         data = request.get_json(force=True, silent=False)
@@ -211,26 +260,45 @@ def process_frame():
         if "error" in payload:
             return jsonify(payload), 500
 
-        # Show the annotated image returned by StereoRuntime
-        try:
-            ann = np.array(payload.get("annotated_image"), dtype=np.uint8)
-            display.show(ann)
-        except Exception:
-            pass
+        # ----- Preview window (annotated image from runtime is a Python list) -----
+        ann_img = _tolist_to_np_uint8(payload.get("annotated_image"))
+        if ann_img is not None:
+            display.show(ann_img)
 
-        # Forward detections + distance_m for biasing logic (client keeps the contract)
+        # ----- Distance + primary bbox (both provided by runtime payload) -----
+        distance_m = payload.get("distance_m", None)   # float|None
+        primary_bbox = payload.get("bbox", None)       # [x1,y1,x2,y2]|None
+        frame_w = int(L.shape[1])
+
+        # Update cache so the Pi can GET /vision_receiver
+        vision_cache.update(distance_m=distance_m, bbox=primary_bbox, frame_w=frame_w)
+
+        # Return compact info (plus processing_time for telemetry)
         return jsonify({
             "mode": "stereo",
             "left": {
                 "processing_time": payload.get("processing_time"),
-                "distance_m": payload.get("distance_m"),
-                "detections": payload.get("detections", [])
+                "distance_m": distance_m,
+                "bbox": primary_bbox
             },
-            "right": None
+            "right": None,
+            "vision_cache": vision_cache.snapshot()
         }), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/vision_receiver", methods=["GET"])
+def vision_receiver():
+    """
+    Pi polls this endpoint. We return a compact JSON containing:
+      - distance_m: Optional[float]
+      - bbox: Optional[List[float]] = [x1,y1,x2,y2]
+      - frame_w: Optional[int]
+      - ts: float (server time of this reading)
+    """
+    return jsonify(vision_cache.snapshot())
 
 
 @app.route("/stats", methods=["GET"])
@@ -252,10 +320,9 @@ def health():
 # =======================
 # TLS (self-signed)
 # =======================
-
 def create_ssl_context() -> ssl.SSLContext:
     """
-    Create HTTPS context. If server.crt/key not present, print a hint.
+    Create HTTPS context. If server.crt/key not present, try to auto-generate a self-signed one.
     """
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.check_hostname = False
@@ -265,22 +332,37 @@ def create_ssl_context() -> ssl.SSLContext:
     key = "server.key"
 
     if not (os.path.exists(crt) and os.path.exists(key)):
-        print("[INFO] SSL certificates not found. Provide server.crt and server.key or install OpenSSL.")
-
+        print("[INFO] SSL certificates not found. Generating self-signed cert (requires openssl)…")
+        try:
+            _generate_self_signed_cert(crt, key)
+        except Exception as e:
+            print(f"[WARN] Could not auto-generate certs: {e}")
+            print("      Provide server.crt and server.key manually or install OpenSSL.")
     context.load_cert_chain(crt, key)
     return context
+
+
+def _generate_self_signed_cert(crt_path: str, key_path: str):
+    import subprocess
+    subj = "/C=DE/ST=BW/L=Heilbronn/O=BIE/OU=VisonStick/CN=visonstick.com"
+    cmd = [
+        "openssl", "req", "-x509", "-newkey", "rsa:4096", "-nodes",
+        "-out", crt_path, "-keyout", key_path, "-days", "365",
+        "-subj", subj
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    print("[INFO] Self-signed certificate generated.")
 
 
 # =======================
 # Main
 # =======================
-
 def _handle_sig(*_):
     try:
         display.stop()
     except Exception:
         pass
-
+    # Flask dev server exits on next loop
 
 if __name__ == "__main__":
     print("[INFO] Starting Stereo YOLO Server…")
