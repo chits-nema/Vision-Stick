@@ -5,7 +5,6 @@ import cv2
 import supervision as sv
 from ultralytics import YOLO
 import numpy as np
-import requests
 
 # ----------------- module-level globals (initialized in init_runtime) -----------------
 Left_Stereo_Map = None      # (map1, map2) for left
@@ -101,7 +100,7 @@ def init_runtime(params_path="stereo_params.npz", model_path="yolo11n.pt",
 def detect_stereo_vision(frameL, frameR):
     """
     IMPORTANT: This function no longer re-creates SGBM/WLS/YOLO on every call.
-    Returns a payload dict with serializable arrays.
+    Returns a payload dict with serializable arrays + primary bbox.
     """
     assert Left_Stereo_Map is not None and Right_Stereo_Map is not None and Q is not None, \
         "Call init_runtime(...) before detect_stereo_vision(...)"
@@ -127,12 +126,18 @@ def detect_stereo_vision(frameL, frameR):
     # 3D reprojection
     points_3D = cv2.reprojectImageTo3D(filteredImg, Q)
 
-    # YOLO
+    # YOLO on LEFT frame (matches annotated_image)
     results = model(frameL)[0]
     detections = sv.Detections.from_ultralytics(results)
 
     labels = []
-    distance_m = None  # ensure defined even if no detections
+    det_summaries = []   # optional: return all detections with bbox + distance
+    primary_bbox = None
+    primary_distance_m = None # ensure defined even if no detections
+    shortest_distance = 10000000000
+
+    #TODO: DICTIONARY OF OBJECTS
+    relevant_objects = ["person", "bicycle", "car", "motorcycle", "fire hydrant", "stop sign", "chair", "bus", "traffic light"]
 
     win_size = 5
     for xyxy, confidence, class_id in zip(detections.xyxy, detections.confidence, detections.class_id):
@@ -141,6 +146,7 @@ def detect_stereo_vision(frameL, frameR):
         cx = (x1 + x2) // 2
         cy = (y1 + y2) // 2
 
+        # local window around center for robust median distance
         x_min = max(0, cx - win_size)
         x_max = min(points_3D.shape[1] - 1, cx + win_size)
         y_min = max(0, cy - win_size)
@@ -154,24 +160,47 @@ def detect_stereo_vision(frameL, frameR):
         Xv, Yv, Zv = X[valid_mask], Y[valid_mask], Z[valid_mask]
 
         if len(Xv) == 0:
-            distance_m = None
+            d_this = None
         else:
             dists_vals = np.sqrt(Xv**2 + Yv**2 + Zv**2)
-            distance_m = float(np.median(dists_vals) / 1000.0)
+            d_this = float(np.median(dists_vals) / 1000.0)  # meters
 
+        # labels for the overlay
         confidence_text = f"{float(confidence):.2f}"
         label_text = f"{class_name} {confidence_text}"
-        if distance_m is not None:
-            label_text += f", {distance_m:.2f}m"
+        if d_this is not None:
+            label_text += f", {d_this:.2f}m"
         labels.append(label_text)
 
-    # Annotate
+        #TODO: if class name is in the dictionary, then append to det_summaries
+        if class_name in relevant_objects:
+            # keep a per-detection summary (optional but handy)
+            det_summaries.append({
+                "class": class_name,
+                "confidence": float(confidence),
+                "bbox": [float(x1), float(y1), float(x2), float(y2)],
+                "distance_m": d_this
+            })
+
+        # TODO: Compare the objects' distance and send the bbox of the closest one to the camera
+
+
+        #  pick primary bbox by largest area
+        #area = max(0, x2 - x1) * max(0, y2 - y1)
+        if d_this < shortest_distance:
+            shortest_distance = d_this
+            primary_bbox = [float(x1), float(y1), float(x2), float(y2)]
+            primary_distance_m = d_this
+
+    # Annotate (boxes + labels)
     annotated_frame = box_annotator.annotate(scene=frameL.copy(), detections=detections)
     annotated_image = label_annotator.annotate(scene=annotated_frame, detections=detections, labels=labels)
 
     payload = {
         "annotated_image": annotated_image.tolist(),
         "filtered_image": filteredImg.tolist(),
-        "distance_m": distance_m
+        "distance_m": primary_distance_m,     # distance for the PRIMARY bbox (or None)
+        "bbox": primary_bbox,                 # [x1,y1,x2,y2] or None
+        "detections": det_summaries           # optional: all detections with their own distances
     }
     return payload
