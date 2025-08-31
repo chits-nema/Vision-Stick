@@ -23,7 +23,7 @@ else:
 
             # Show the frame
             cv2.imshow(f"Camera {i}", frame)
-            cv2.waitKey(1000)  # display for 1 second
+            cv2.waitKey(1000)
 
             # Get resolution
             height, width = frame.shape[:2]

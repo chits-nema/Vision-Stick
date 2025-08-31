@@ -17,39 +17,6 @@ _JPEG_QUALITY = 80
 _HTTP_TIMEOUT_S = 0.25        # keep short so your loop never stalls long
 
 class StereoFrameSender:
-    """Singleton stereo camera sender (usable without threads).
-
-    Typical usage (no threads):
-        from stereo_sender import StereoFrameSender
-        sender = StereoFrameSender.get(base_url="https://<ip>:<port>", verify_tls=False, fps=6.0)
-# ---- optional thread API (not required if you use tick()) ----
-# def start(self) -> None:
-#     import threading
-#     if self._thread and self._thread.is_alive():
-#         return
-#     self._stop_evt = threading.Event()
-#     self._thread = threading.Thread(target=self._run_thread, name="StereoFrameSender", daemon=True)
-#     self._thread.start()
-#
-# def stop(self) -> None:
-#     if self._stop_evt:
-#         self._stop_evt.set()
-#     t = self._thread
-#     if t:
-#         t.join(timeout=1.5)
-#     self.close()
-#
-# def _run_thread(self) -> None:
-#     self.ensure_open()
-#     while self._stop_evt and not self._stop_evt.is_set():
-#         self.tick()  # reuse the non-threaded logic
-#         time.sleep(0.002)        sender.ensure_open()   # optional warm-up outside the loop
-        while True:
-            ... your control loop ...
-            sender.tick()      # returns quickly; posts frames when due
-
-    There is also an optional start()/stop() threaded API if you ever want it.
-    """
 
     _instance: Optional["StereoFrameSender"] = None
 
@@ -100,10 +67,6 @@ class StereoFrameSender:
         self._picamR: Optional[Picamera2] = None
         self._opened = False
         self._next_t = 0.0
-
-        # optional thread support
-        # self._thread = None
-        # self._stop_evt = None
 
     # ---- lifecycle (non-threaded) ----
     def ensure_open(self) -> bool:
@@ -180,26 +143,3 @@ class StereoFrameSender:
         if not ok:
             raise RuntimeError("JPEG encode failed")
         return base64.b64encode(buf).decode("ascii"), (frame.shape[0], frame.shape[1])
-
-   # ---- optional thread API (not required if you use tick()) ----
-# def start(self) -> None:
-#     import threading
-#     if self._thread and self._thread.is_alive():
-#         return
-#     self._stop_evt = threading.Event()
-#     self._thread = threading.Thread(target=self._run_thread, name="StereoFrameSender", daemon=True)
-#     self._thread.start()
-#
-# def stop(self) -> None:
-#     if self._stop_evt:
-#         self._stop_evt.set()
-#     t = self._thread
-#     if t:
-#         t.join(timeout=1.5)
-#     self.close()
-#
-# def _run_thread(self) -> None:
-#     self.ensure_open()
-#     while self._stop_evt and not self._stop_evt.is_set():
-#         self.tick()  # reuse the non-threaded logic
-#         time.sleep(0.002)

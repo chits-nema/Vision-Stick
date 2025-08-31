@@ -1,12 +1,8 @@
-# =============================
-# StereoRuntime.py  (final, minimal fixes)
-# =============================
 import cv2
 import supervision as sv
 from ultralytics import YOLO
 import numpy as np
 
-# ----------------- module-level globals (initialized in init_runtime) -----------------
 Left_Stereo_Map = None      # (map1, map2) for left
 Right_Stereo_Map = None     # (map1, map2) for right
 Q = None                    # 4x4 reprojection matrix
@@ -35,14 +31,12 @@ _DEFAULT_WLS = dict(
 
 
 def _build_matchers(sgbm_params=None, wls_params=None):
-    """Build SGBM, right matcher and WLS once (called from init_runtime)."""
     global stereo, stereoR, wls_filter
 
     p = _DEFAULT_SGBM.copy()
     if sgbm_params:
         p.update(sgbm_params)
 
-    # Create SGBM
     stereo_local = cv2.StereoSGBM_create(
         minDisparity=p["min_disp"],
         numDisparities=p["num_disp"],
@@ -99,7 +93,7 @@ def init_runtime(params_path="stereo_params.npz", model_path="yolo11n.pt",
 
 def detect_stereo_vision(frameL, frameR):
     """
-    IMPORTANT: This function no longer re-creates SGBM/WLS/YOLO on every call.
+    This function no longer re-creates SGBM/WLS/YOLO on every call.
     Returns a payload dict with serializable arrays + primary bbox.
     """
     assert Left_Stereo_Map is not None and Right_Stereo_Map is not None and Q is not None, \
@@ -131,12 +125,11 @@ def detect_stereo_vision(frameL, frameR):
     detections = sv.Detections.from_ultralytics(results)
 
     labels = []
-    det_summaries = []   # optional: return all detections with bbox + distance
+    det_summaries = [] 
     primary_bbox = None
-    primary_distance_m = None # ensure defined even if no detections
+    primary_distance_m = None
     shortest_distance = 10000000000
 
-    #TODO: DICTIONARY OF OBJECTS
     relevant_objects = ["person", "bicycle", "car", "motorcycle", "fire hydrant", "stop sign", "chair", "bus", "traffic light"]
 
     win_size = 5
@@ -146,7 +139,7 @@ def detect_stereo_vision(frameL, frameR):
         cx = (x1 + x2) // 2
         cy = (y1 + y2) // 2
 
-        # local window around center for robust median distance
+        # local window around center
         x_min = max(0, cx - win_size)
         x_max = min(points_3D.shape[1] - 1, cx + win_size)
         y_min = max(0, cy - win_size)
@@ -172,9 +165,7 @@ def detect_stereo_vision(frameL, frameR):
             label_text += f", {d_this:.2f}m"
         labels.append(label_text)
 
-        #TODO: if class name is in the dictionary, then append to det_summaries
         if class_name in relevant_objects:
-            # keep a per-detection summary (optional but handy)
             det_summaries.append({
                 "class": class_name,
                 "confidence": float(confidence),
@@ -182,11 +173,7 @@ def detect_stereo_vision(frameL, frameR):
                 "distance_m": d_this
             })
 
-        # TODO: Compare the objects' distance and send the bbox of the closest one to the camera
-
-
         #  pick primary bbox by largest area
-        #area = max(0, x2 - x1) * max(0, y2 - y1)
         if d_this < shortest_distance:
             shortest_distance = d_this
             primary_bbox = [float(x1), float(y1), float(x2), float(y2)]
@@ -199,8 +186,8 @@ def detect_stereo_vision(frameL, frameR):
     payload = {
         "annotated_image": annotated_image.tolist(),
         "filtered_image": filteredImg.tolist(),
-        "distance_m": primary_distance_m,     # distance for the PRIMARY bbox (or None)
-        "bbox": primary_bbox,                 # [x1,y1,x2,y2] or None
-        "detections": det_summaries           # optional: all detections with their own distances
+        "distance_m": primary_distance_m,
+        "bbox": primary_bbox,                 
+        "detections": det_summaries           
     }
     return payload

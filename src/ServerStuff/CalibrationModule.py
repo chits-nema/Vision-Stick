@@ -75,13 +75,6 @@ def run_calibration_and_save(output_path: str = "stereo_params.npz"):
             imgpointsR.append(cornersR)
             imgpointsL.append(cornersL)
 
-            # Draw and display the corners
-            # just to give a detection of the cornerx
-            # can be commented out later or removed we are just checking that the algorithm actually words
-
-            # ChessImaR = cv2.drawChessboardCorners(ChessImaR, CHECKERBOARD, cornersR, retR)
-            # ChessImaL = cv2.drawChessboardCorners(ChessImaL, CHECKERBOARD, cornersL, retL)
-
         cv2.waitKey(0)
 
     cv2.destroyAllWindows()
@@ -99,8 +92,7 @@ def run_calibration_and_save(output_path: str = "stereo_params.npz"):
     # rvecs -> rotation extrinsics for each image
     # tvecs -> translation extrinsics for each image
 
-    """Internal parameters of the camera/lens system. E.g. focal length, optical center, and radial distortion coefficients of the lens.
-    External parameters : This refers to the orientation (rotation and translation) of the camera with respect to some world coordinate system."""
+
     # Determine the new values for different parameters
     #   Right Side
     hR, wR = ChessImaR.shape[:2]
@@ -116,10 +108,6 @@ def run_calibration_and_save(output_path: str = "stereo_params.npz"):
                                                             imgpointsL,
                                                             (wL, hL), None, None)
     OmtxL, roiL = cv2.getOptimalNewCameraMatrix(mtxL, distL, (wL, hL), 1, (wL, hL))
-
-    # we use OmtxR, OmtxL, roiL and roiR for distrotion purposes of the camera(intrinsic parameters) Om are our new camera matrices from the old code :)
-    # new camera matrix for distortion old code next line
-    # newcameramtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, (w,h), 1, (w,h))
 
     print('Cameras Ready to use')
     print("Camera matrix : \n")
@@ -185,24 +173,17 @@ def run_calibration_and_save(output_path: str = "stereo_params.npz"):
                                                    (wR, hR), cv2.CV_16SC2)
 
     # ---------- SAVE calibration results to .npz ----------
-    # We store everything needed for runtime (maps, Q, intrinsics, etc.)
     np.savez(
         'stereo_params.npz',
-        # intrinsics & distortion
         mtxR=mtxR, mtxL=mtxL, distR=distR, distL=distL,
-        # stereo rectification components
         RL=RL, RR=RR, PL=PL, PR=PR, Q=Q,
-        # undistort/rectify maps (as separate arrays for left/right)
         left_map1=Left_Stereo_Map[0], left_map2=Left_Stereo_Map[1],
         right_map1=Right_Stereo_Map[0], right_map2=Right_Stereo_Map[1],
-        # image sizes (optional, kept for completeness)
         wR=wR, hR=hR, wL=wL, hL=hL,
-        # optional extras
         baseline=B_estimated, fx=fx, fy=fy, f_q=f_q
     )
     print("[OK] Saved calibration to stereo_params.npz")
 
 
-# Optional: allow running as a script
 if __name__ == "__main__":
     run_calibration_and_save("stereo_params.npz")
