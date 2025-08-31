@@ -13,7 +13,6 @@ If you use a self‑signed cert for testing, set VERIFY_TLS=False.
 
 from __future__ import annotations
 
-import base64
 import json
 import math
 import ssl
@@ -23,15 +22,13 @@ from typing import Optional, Tuple
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 
-import cv2
-import requests
 from gpiozero import PWMOutputDevice
 from picamera2 import Picamera2
 import all_new_distancesensor
 import sendClient
 
 # ---------------------------- Server / HTTPS config ----------------------------
-BASE_URL = "https://192.168.0.123:8443"   # <— set to your Windows server base URL
+BASE_URL = "https://192.168.0.123:8443"   # CHANGE TO YOUR HOST'S IP!!!!
 VISION_GET_PATH = "/vision_receiver"     # GET distance/bbox here
 FRAMES_POST_PATH = "/process_frame"      # POST stereo frames here
 VERIFY_TLS = False                         # True if server cert is trusted; False for self‑signed (dev only)
@@ -50,7 +47,7 @@ MOTOR_L_PIN, MOTOR_R_PIN = 13, 12
 TRIG_L, ECHO_L = 18, 14
 TRIG_R, ECHO_R = 24, 15
 PWM_HZ = 100
-MIN_CM, MAX_CM = 5.0, 50.0
+MIN_CM, MAX_CM = 5.0, 100.0
 MIN_DUTY = 0.01
 SYNCED = True
 
@@ -68,6 +65,9 @@ _last_poll_ts = 0.0
 _last_seen_ts = 0.0
 _last_vision_cm: Optional[float] = None
 _last_bias: Tuple[float, float] = (1.0, 1.0)
+
+_last_bbox: Optional[Tuple[float, float, float, float]] = None
+_last_frame_w: float = float(DEFAULT_FRAME_W)
 
 # ---------------------------- Helpers -----------------------------------------
 
@@ -95,10 +95,10 @@ def is_valid_cm(value) -> bool:
 
 def map_dist_to_duty(d_cm: float) -> float:
     if d_cm <= MIN_CM:
-        return 0.1
+        return 0.25
     if d_cm >= MAX_CM:
         return 0.0
-    return 0.1 - (d_cm - MIN_CM) / (10 * (MAX_CM - MIN_CM))
+    return 0.25 - (d_cm - MIN_CM) / (4 * (MAX_CM - MIN_CM))
 
 
 def post_modulate(duty_l: float, duty_r: float) -> tuple[float, float]:
@@ -108,7 +108,7 @@ def post_modulate(duty_l: float, duty_r: float) -> tuple[float, float]:
         duty_l, duty_r = common, common
     duty_l *= BIAS_L
     duty_r *= BIAS_R
-    return clamp(duty_l, 0.0, 0.5), clamp(duty_r, 0.0, 0.5)
+    return clamp(duty_l, 0.0, 1.0), clamp(duty_r, 0.0, 1.0)
 
 
 def apply_deadzone(duty: float) -> float:
@@ -145,7 +145,12 @@ def _http_get_json(url: str, timeout: float, verify_tls: bool) -> Optional[bytes
 # ---------------------------- Vision JSON parser ------------------------------
 
 def _parse_vision_json(raw: bytes) -> Tuple[Optional[float], Tuple[float, float]]:
-    """Return (distance_cm|None, (bias_l,bias_r)). Ignores y; uses bbox x‑center only."""
+    """Return (distance_cm|None, (bias_l, bias_r)).
+    Also updates module globals _last_bbox and _last_frame_w for printing elsewhere.
+    Ignores y; bias from bbox x-center only.
+    """
+    # --- new globals to remember the last bbox + frame width (no API changes) ---
+    global _last_bbox, _last_frame_w
     try:
         data = json.loads(raw.decode("utf-8", errors="ignore"))
         if not isinstance(data, dict):
@@ -160,32 +165,52 @@ def _parse_vision_json(raw: bytes) -> Tuple[Optional[float], Tuple[float, float]
         candidate = dm_f * 100.0
         d_cm = candidate if is_valid_cm(candidate) else None
 
-    # bias from bbox x
+    # frame width (fallback to default)
     frame_w = _safe_float(data.get("frame_w"))
     if frame_w is None or frame_w <= 0 or frame_w > MAX_REASONABLE_FRAME_W:
         frame_w = float(DEFAULT_FRAME_W)
+    _last_frame_w = frame_w  # remember for external printing
 
-    bias = (1.0, 1.0)
+    # bbox parsing (x1,y1,x2,y2) or (x1,x2)
+    _last_bbox = None
+    x1 = y1 = x2 = y2 = None
     bbox = data.get("bbox")
-    x1 = x2 = None
     if isinstance(bbox, (list, tuple)):
         if len(bbox) == 4:
-            x1 = _safe_float(bbox[0]); x2 = _safe_float(bbox[2])
-        elif len(bbox) == 2:
+            x1 = _safe_float(bbox[0]); y1 = _safe_float(bbox[1])
+            x2 = _safe_float(bbox[2]); y2 = _safe_float(bbox[3])
+        elif len(bbox) == 2:  # (x1, x2) only
             x1 = _safe_float(bbox[0]); x2 = _safe_float(bbox[1])
     if x1 is not None and x2 is not None:
         if x2 < x1:
             x1, x2 = x2, x1
+        _last_bbox = (x1, y1, x2, y2)
+
+    # ---- Dynamic bias from horizontal error (normalized, then clamped) ----
+    bias = (1.0, 1.0)
+    if x1 is not None and x2 is not None:
         w = x2 - x1
         if 0 < w <= 2 * frame_w:
             cx = (x1 + x2) / 2.0
             cx = clamp(cx, 0.0, frame_w)
+
+            # dead-zone around image center
             dead = CENTER_DEAD_ZONE_FRAC * frame_w
-            if abs(cx - (frame_w / 2.0)) <= dead:
+            center = frame_w / 2.0
+            if abs(cx - center) <= dead:
                 bias = (1.0, 1.0)
             else:
-                bias = (1.25, 0.75) if cx < (frame_w / 2.0) else (0.75, 1.25)
-    bias = (clamp(bias[0], BIAS_MIN, BIAS_MAX), clamp(bias[1], BIAS_MIN, BIAS_MAX))
+                # normalized signed error in [-1, 1]: + means target is left of center
+                err = (center - cx) / center
+                # gain limits the swing; choose 0.25 for +/-25% before clamping
+                gain = 0.25
+                bias_l = 1.0 + gain * err
+                bias_r = 1.0 - gain * err
+                bias = (
+                    clamp(bias_l, BIAS_MIN, BIAS_MAX),
+                    clamp(bias_r, BIAS_MIN, BIAS_MAX)
+                )
+
     return d_cm, bias
 
 # ---------------------------- Vision polling cache ----------------------------
@@ -219,7 +244,7 @@ def main():
 
     # Start stereo frame sender (background). Comment out to run as separate script.
     sender = sendClient.StereoFrameSender.get(base_url=BASE_URL, verify_tls=False, fps=6.0, http_timeout_s=0.2)
-    sender.ensure_open()
+    sender.start()
 
     # Setup ultrasonics + motors
     all_new_distancesensor.setup()
@@ -259,16 +284,28 @@ def main():
             # Debug
             def fmt(v):
                 return f"{v:5.1f}" if is_valid_cm(v) else " --.-"
+
+            def fmt_bbox(bb):
+                if not bb:
+                    return "(None)"
+                x1, y1, x2, y2 = bb
+
+                # y may be None if server only sends (x1, x2); print gracefully
+                def f(a):
+                    return "--" if a is None else f"{a:.1f}"
+
+                return f"(x1={f(x1)}, y1={f(y1)}, x2={f(x2)}, y2={f(y2)})"
+
             print(
                 f"UL(L={fmt(d_l)} cm, R={fmt(d_r)} cm) | "
                 f"VISION={fmt(vision_cm)} cm | "
                 f"BIAS(L={BIAS_L:.2f}, R={BIAS_R:.2f}) | "
-                f"PWM(L={motor_l.value:.3f}, R={motor_r.value:.3f})"
+                f"PWM(L={motor_l.value:.3f}, R={motor_r.value:.3f}) | "
+                f"BBOX={fmt_bbox(_last_bbox)} FW={_last_frame_w:.0f}"
             )
-
             sleep(0.05)
     finally:
-        sender.close()
+        sender.stop()
         motor_l.off(); motor_r.off()
         all_new_distancesensor.cleanup()
 

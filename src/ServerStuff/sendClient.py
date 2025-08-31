@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import base64
 import time
-from typing import Optional, Tuple
+from typing import Optional
+import threading
+
 import cv2
 import requests
 from picamera2 import Picamera2
 
 # Defaults (can be overridden via get())
-_BASE_URL = "https://192.168.0.123:8443"
+_BASE_URL = "https://192.168.0.123:8443" #  CHANGE TO YOUR HOST'S IP!!!!
 _POST_PATH = "/process_frame"
 _VERIFY_TLS = False           # set True if your Windows server has a trusted cert
 _TARGET_WIDTH = 640
@@ -16,11 +18,17 @@ _FPS = 8.0                    # tick() will send at most this often
 _JPEG_QUALITY = 80
 _HTTP_TIMEOUT_S = 0.25        # keep short so your loop never stalls long
 
+
 class StereoFrameSender:
+    """Stereo camera sender module :D
+    very nice because we use threads. This takes advatange of the multiple cores
+    of the ARM Cortex A76 CPU in the Raspberry Pi 5.
+    """
 
     _instance: Optional["StereoFrameSender"] = None
 
     @classmethod
+    # Class definition!!!!!!!!!
     def get(
         cls,
         *,
@@ -68,6 +76,10 @@ class StereoFrameSender:
         self._opened = False
         self._next_t = 0.0
 
+        # thread state
+        self._thread: Optional[threading.Thread] = None
+        self._stop_evt: Optional[threading.Event] = None
+
     # ---- lifecycle (non-threaded) ----
     def ensure_open(self) -> bool:
         """Open cameras once; safe to call multiple times."""
@@ -81,8 +93,7 @@ class StereoFrameSender:
             self._picamR.configure(self._picamR.create_preview_configuration(main=cfg))
             self._picamL.start(); self._picamR.start()
             self._opened = True
-            # schedule first send immediately
-            self._next_t = time.time()
+            self._next_t = time.time()  # send immediately
             return True
         except Exception as e:
             print(f"[StereoFrameSender] Camera init failed: {e}")
@@ -90,6 +101,7 @@ class StereoFrameSender:
             return False
 
     def close(self) -> None:
+        # To close the cameras
         if not self._opened:
             return
         try:
@@ -99,7 +111,7 @@ class StereoFrameSender:
             pass
         self._opened = False
 
-    # ---- call this on main ----
+    # ---- non-threaded cadence ----
     def tick(self) -> bool:
         """Capture+POST when due; otherwise return quickly.
         Returns True iff a frame pair was sent this call.
@@ -125,8 +137,9 @@ class StereoFrameSender:
                 "shapeR": [int(hw_r[0]), int(hw_r[1])],
                 "timestamp": now,
             }
-            r = requests.post(self.post_url, json=payload, timeout=self.http_timeout_s, verify=self.verify_tls)
-            return r.status_code == 200
+            resp = requests.post(self.post_url, json=payload,
+                                 timeout=self.http_timeout_s, verify=self.verify_tls)
+            return resp.status_code == 200
         except requests.RequestException:
             return False
         except Exception:
@@ -143,3 +156,45 @@ class StereoFrameSender:
         if not ok:
             raise RuntimeError("JPEG encode failed")
         return base64.b64encode(buf).decode("ascii"), (frame.shape[0], frame.shape[1])
+
+    # ---- optional threaded API ----
+    def start(self) -> None:
+        """Start background sending loop (idempotent)."""
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop_evt = threading.Event()
+        self._thread = threading.Thread(target=self._run_thread,
+                                        name="StereoFrameSender", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Stop background loop and close cameras."""
+        if self._stop_evt:
+            self._stop_evt.set()
+        t = self._thread
+        if t:
+            t.join(timeout=1.5)
+        self._thread = None
+        self._stop_evt = None
+        self.close()
+
+    def _run_thread(self) -> None:
+        """Loop that reuses tick() and sleeps precisely until the next due send."""
+        # Open once (safe if already open)
+        self.ensure_open()
+
+        # honor cadence
+        while self._stop_evt and not self._stop_evt.is_set():
+            now = time.time()
+            # If it's time, tick() will send and also push _next_t
+            sent = self.tick()
+            # Sleep until next frame time (or a tiny nap if not open yet)
+            if self._opened:
+                # compute remaining time to next target instant
+                sleep_for = max(0.0, self._next_t - time.time())
+                # wake up a touch early to amortize capture latency
+                if sleep_for > 0:
+                    self._stop_evt.wait(sleep_for)
+            else:
+                # camera not opened yet; back off slightly
+                self._stop_evt.wait(0.05)
