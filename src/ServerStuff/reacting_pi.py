@@ -278,9 +278,7 @@ def main():
 
             motor_l.value = apply_deadzone(duty_l)
             motor_r.value = apply_deadzone(duty_r)
-
-            sender.tick()
-
+            # ---- Print status ----
             # Debug
             def fmt(v):
                 return f"{v:5.1f}" if is_valid_cm(v) else " --.-"
