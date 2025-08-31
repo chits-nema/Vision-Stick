@@ -1,19 +1,36 @@
-#Function: To Check Camera Index
+# Function: To Check Camera Index with Picamera2
+from picamera2 import Picamera2
 import cv2
 
+cameras = Picamera2.global_camera_info()
 
-for i in range(5):
-    cap=cv2.VideoCapture(i)
-    if cap.isOpened():
-        ret, frame=cap.read()
-        print(f"Camera {i} is available")
-        cv2.imshow(f"Camera {i}", frame)
-        cv2.waitKey(1000)
+if not cameras:
+    print("No cameras found!")
+else:
+    for i, cam_info in enumerate(cameras):
+        print(f"\nCamera {i} info: {cam_info}")
 
-        width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-        height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-        print(f"Resolution: {width} x {height}")
+        try:
+            picam2 = Picamera2(i)
 
-        cap.release()
-    else:
-        print(f"Camera {i} is not available")
+            # Configure and start the camera
+            config = picam2.create_preview_configuration()
+            picam2.configure(config)
+            picam2.start()
+
+            # Capture one frame
+            frame = picam2.capture_array()
+
+            # Show the frame
+            cv2.imshow(f"Camera {i}", frame)
+            cv2.waitKey(1000)  # display for 1 second
+
+            # Get resolution
+            height, width = frame.shape[:2]
+            print(f"Resolution: {width} x {height}")
+
+            picam2.close()
+        except Exception as e:
+            print(f"Camera {i} could not be opened: {e}")
+
+cv2.destroyAllWindows()
