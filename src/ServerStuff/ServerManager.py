@@ -316,6 +316,15 @@ def health():
         pass
     return jsonify({"status": "healthy", "model_loaded": True, "opencv_gpu": gpu_info})
 
+# add near your other routes
+@app.route("/about", methods=["GET"])
+def about():
+    return jsonify({
+        "user": os.getenv("STICK_USER", "unknown"),
+        "note": os.getenv("STICK_NOTE", ""),
+        "server_time": time.time(),
+        "version": "1.0.0"
+    })
 
 # =======================
 # TLS (self-signed)
