@@ -6,9 +6,6 @@ Pi 5 — HTTPS motor control client + dual‑camera frame sender (unified, non�
 - Captures **two Picamera2** streams and **POSTs** them as JPEGs to /process_frame on the same server.
 - Frame sending runs in a background thread (throttled), so the motor loop stays responsive.
 - All network operations use short timeouts to avoid deadlocks.
-
-Edit the BASE_URL below (e.g. "https://192.168.0.123:8443").
-If you use a self‑signed cert for testing, set VERIFY_TLS=False.
 """
 
 from __future__ import annotations
@@ -28,10 +25,10 @@ import all_new_distancesensor
 import sendClient
 
 # ---------------------------- Server / HTTPS config ----------------------------
-BASE_URL = "https://192.168.0.123:8443"   # CHANGE TO YOUR HOST'S IP!!!!
+BASE_URL = "https://192.168.0.123:8443"   # HOST'S IP!!!!
 VISION_GET_PATH = "/vision_receiver"     # GET distance/bbox here
 FRAMES_POST_PATH = "/process_frame"      # POST stereo frames here
-VERIFY_TLS = False                         # True if server cert is trusted; False for self‑signed (dev only)
+VERIFY_TLS = False                         # True if server cert is trusted; False for self‑signed
 
 VISION_URL = BASE_URL.rstrip("/") + VISION_GET_PATH
 FRAMES_URL = BASE_URL.rstrip("/") + FRAMES_POST_PATH
@@ -169,7 +166,7 @@ def _parse_vision_json(raw: bytes) -> Tuple[Optional[float], Tuple[float, float]
     frame_w = _safe_float(data.get("frame_w"))
     if frame_w is None or frame_w <= 0 or frame_w > MAX_REASONABLE_FRAME_W:
         frame_w = float(DEFAULT_FRAME_W)
-    _last_frame_w = frame_w  # remember for external printing
+    _last_frame_w = frame_w  
 
     # bbox parsing (x1,y1,x2,y2) or (x1,x2)
     _last_bbox = None
