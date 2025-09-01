@@ -17,8 +17,8 @@ names = None
 # Default Step-3/4 params
 _DEFAULT_SGBM = dict(
     window_size=3,
-    min_disp=39,
-    num_disp=128,
+    min_disp=50,
+    num_disp=176,
     uniquenessRatio=10,
     speckleWindowSize=100,
     speckleRange=32,
