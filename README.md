@@ -41,12 +41,14 @@ Vision-Stick enhances a traditional white cane with real-time obstacle awareness
 
 ## Dependencies & Setup
 1) We created a HTTPS server using the Flask framework with the purpose of storing incoming frames from the Pi 5 cameras. This server runs in an external host (i.e. Windows Laptop); with the main goal of executing the Stereo-Vision module in this device. Thus, this relieves the Raspberry Pi 5 of executing CPU-intensive operations, reducing the overhead and thus allowing the system to work within the real-time constraints of such an assisting device.
+This server must be initialized every time the stick is used, and codes must be updated accordingly to enable it.
 
-2) Camera Calibration
+3) Camera Calibration
   
-3) In the source codes, we used many ubiquitous python libraries such as: flask, numpy, opencv, supervision, requests and openssl. This enables the logical integration of the stereovision model with the server manager code and various mathematical operations.
+4) In the source codes, we used many ubiquitous python libraries such as: flask, numpy, opencv, supervision, requests and openssl. This enables the logical integration of the stereovision model with the server manager code and various mathematical operations.
 
 5) In order to program the logic of the implemented circuits we have used various phyton libraries as well; such as gpiozero, picamera2, numpy and cv. As one can infer by their name these allow to define the explicit behavior of the gpio pins and the connected camera modules.
+The Raspberry Pi 5 must be initially setup as well with the necessary libraries and python packages.
 
 6) Of course, we also implemented our own phyton classes and modules to manage important functionalities and objects, these are SendingClient, and generic classes such as DisplayManager and StereoVissionProcessor.
   
