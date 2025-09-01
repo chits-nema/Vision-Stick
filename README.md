@@ -1,8 +1,8 @@
 # Vision-Stick
 The VisionStick is a smart system integrated with a mobility cane, aimed at helping the visually impaired navigate their surroundings. The device is designed to detect obstacles around the user. When an obstacle is detected, users are alerted through an alert system. 
 
-##Common Detected Objects
-person, bicycle, car, motorcycle, fire hydrant, stop sign, chair", "bus", "traffic light"
+## Common Detected Objects
+person, bicycle, car, motorcycle, fire hydrant, stop sign, chair, bus, traffic light
 
 ---
 
@@ -52,13 +52,3 @@ Vision-Stick enhances a traditional white cane with real-time obstacle awareness
 - Developed as part of the Embedded Systems, Cyber-Physical Systems and Robotics (INHN0018) course at TUM. 
 - Thanks to BSVW Heilbronn for field insights
 - Built on OpenCV and Ultralytics YOLO
-
----
-## Team Members
-- [Advitya Chopra] (https://github.com/adv1ch)
-- [Chitsidzo V. Nemazuwa] (https://github.com/chits-nema)
-- [Kanaya N. Ozora] (https://github.com/nayachewsudon)
-- [Oscar E. Navarro Banderas] (https://github.com/Oscar27NX)
-- [Sofia Libman] (http://github.com/morisdann)
-- [Syed R. Qamar] ()
-- [Süeda Özkaya] (https://github.com/suedaozkaya)
