@@ -27,7 +27,7 @@ while True:
     frameL_rgb = picamL.capture_array()
 
     #Rotate camera 180 degrees
-    frameL_rgb = cv2.rotate(frameL_rgb, cv2.ROTATE_180)
+    frameR_rgb = cv2.rotate(frameR_rgb, cv2.ROTATE_180)
 
     frameR = cv2.cvtColor(frameR_rgb, cv2.COLOR_RGB2BGR)
     frameL = cv2.cvtColor(frameL_rgb, cv2.COLOR_RGB2BGR)
