@@ -37,7 +37,7 @@ def run_calibration_and_save(output_path: str = "stereo_params.npz"):
     print('Starting calibration for the 2 cameras... ')
     # Call all saved images
     for i in range(0,
-                   20):  # Put the amount of pictures you have taken for the calibration inbetween range(0,?) wenn starting from the image number 0
+                   64):  # Put the amount of pictures you have taken for the calibration inbetween range(0,?) wenn starting from the image number 0
         t = str(i)
 
         # second argument 0 grays the image
