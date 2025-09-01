@@ -1,4 +1,4 @@
-# Vision-Stick
+# VisionStick
 The VisionStick is a smart system integrated with a mobility cane, aimed at helping the visually impaired navigate their surroundings. The device is designed to detect obstacles around the user. When an obstacle is detected, users are alerted through an alert system. 
 
 ## Common Detected Objects
@@ -6,7 +6,7 @@ person, bicycle, car, motorcycle, fire hydrant, stop sign, chair, bus, traffic l
 
 ---
 
-## Why Vision-Stick?
+## Why VisionStick?
 Cities like Heilbronn have constant construction and complex traffic zones that make navigation especially difficult for people with visual impairments.  
 Vision-Stick enhances a traditional white cane with real-time obstacle awareness and discreet haptic feedback, aiming to increase safety and independence.
 
