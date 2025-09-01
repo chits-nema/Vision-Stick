@@ -41,8 +41,8 @@ def run_calibration_and_save(output_path: str = "stereo_params.npz"):
         t = str(i)
 
         # second argument 0 grays the image
-        ChessImaR = cv2.imread('chessboard-L' + t + '.png', 0)  # Right side
-        ChessImaL = cv2.imread('chessboard-R' + t + '.png', 0)  # Left side
+        ChessImaR = cv2.imread('src/ServerStuff/chessboard-L' + t + '.png', 0)  # Right side
+        ChessImaL = cv2.imread('src/ServerStuff/chessboard-R' + t + '.png', 0)  # Left side
 
         print("ChessImaR:", type(ChessImaR), ChessImaR.shape if ChessImaR is not None else "None")
 
