@@ -1,6 +1,6 @@
 import numpy as np
 import cv2
-from picamera2 import Picamera2
+from picamera2 import Picamera2, Transform
 
 print('Starting the Calibration. Press and maintain the space bar to exit the script\n')
 print('Push (s) to save the image you want andw push (c) to see next frame without saving the image')
