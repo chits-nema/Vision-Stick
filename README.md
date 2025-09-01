@@ -1,4 +1,4 @@
-# Vision-Stick
+22# Vision-Stick
 The VisionStick is a smart system integrated with a mobility cane, aimed at helping the visually impaired navigate their surroundings. The device is designed to detect obstacles around the user. When an obstacle is detected, users are alerted through an alert system. 
 
 ## Common Detected Objects
@@ -40,12 +40,20 @@ Vision-Stick enhances a traditional white cane with real-time obstacle awareness
 ---
 
 ## Dependencies & Setup
-1) Server
+1) flask Server
+   We created a HTTPS server using the Flask framework with the purpose of storing incoming frames from the Pi 5 cameras. This server runs in an external host (i.e. Windows Laptop); with the main goal of executing the Stereo-Vision module in this device.
+   Thus, this relieves the Raspberry Pi 5 of executing CPU-intensive operations, reducing the overhead and thus allowing the system to work within the real-time constraints of such an assisting device.
 
 2) Camera Calibration
+  
+3) Misc. of Python libraries
+   In the source codes, we used libraries such as: flask, numpy, opencv, supervision, requests and ssl. This enables the logical integration of the stereovision model with the server manager code and various mathematical operations.
+4) Raspberry Pi 5 libraries
+   In order to program the logic of the implemented circuits we have used various phyton libraries, such as gpiozero, picamera2, numpy and cv. As one can infer by their name these allow to define the explicit behavior of the gpio pins and the connected camera modules.
 
-3) Raspberry Pi
-
+5) Modules
+   We also implemented our own phyton classes and modules to manage important functionalities and objects, these are SendingClient, and generic classes such as DisplayManager and StereoVissionProcessor.
+  
 ---
 
 ## Acknowledgements
