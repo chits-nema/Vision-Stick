@@ -10,10 +10,9 @@ id_image=0
 # termination criteria
 criteria =(cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 
-picamR = Picamera2(1)  # Right Camera
-picamL = Picamera2(0)  # Left Camera
+picamR = Picamera2(0)  # Right Camera
+picamL = Picamera2(1)  # Left Camera
 
-#Rotate camera by 180 degrees
 configR = picamR.create_preview_configuration()
 picamR.configure(configR)
 picamR.start()
@@ -28,7 +27,7 @@ while True:
     frameL_rgb = picamL.capture_array()
 
     #Rotate camera 180 degrees
-    frameR_rgb = cv2.rotate(frameR_rgb, cv2.ROTATE_180)
+    frameL_rgb = cv2.rotate(frameL_rgb, cv2.ROTATE_180)
 
     frameR = cv2.cvtColor(frameR_rgb, cv2.COLOR_RGB2BGR)
     frameL = cv2.cvtColor(frameL_rgb, cv2.COLOR_RGB2BGR)
