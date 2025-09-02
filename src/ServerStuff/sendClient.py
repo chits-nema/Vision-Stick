@@ -86,8 +86,8 @@ class StereoFrameSender:
         if self._opened:
             return True
         try:
-            self._picamL = Picamera2(0)
-            self._picamR = Picamera2(1)
+            self._picamL = Picamera2(1)
+            self._picamR = Picamera2(0)
             cfg = {"size": (1280, 720), "format": "RGB888"}
             self._picamL.configure(self._picamL.create_preview_configuration(main=cfg))
             self._picamR.configure(self._picamR.create_preview_configuration(main=cfg))
