@@ -1,57 +1,30 @@
-import RPi.GPIO as GPIO
-import time
+# all_new_distancesensor.py  (Pi 5 friendly)
+from gpiozero import DistanceSensor
 
-# ---- Pin setup (define constants only) ----
-TRIG1 = 23
-ECHO1 = 24
-TRIG2 = 25
-ECHO2 = 8
+_left = None
+_right = None
+
+# BCM pins — keep these matching your main script
+TRIG_L, ECHO_L = 18, 14
+TRIG_R, ECHO_R = 24, 15
 
 def setup():
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setwarnings(False)
-    GPIO.setup(TRIG1, GPIO.OUT)
-    GPIO.setup(ECHO1, GPIO.IN)
-    GPIO.setup(TRIG2, GPIO.OUT)
-    GPIO.setup(ECHO2, GPIO.IN)
-    GPIO.output(TRIG1, False)
-    GPIO.output(TRIG2, False)
-    time.sleep(0.1)  # short settle delay
+    global _left, _right
+    # max_distance in meters; queue_len smooths readings
+    _left  = DistanceSensor(echo=ECHO_L, trigger=TRIG_L, max_distance=2.0, queue_len=3)
+    _right = DistanceSensor(echo=ECHO_R, trigger=TRIG_R, max_distance=2.0, queue_len=3)
 
-def get_distance(trig, echo):
-    GPIO.output(trig, True)
-    time.sleep(0.00001)
-    GPIO.output(trig, False)
-
-    timeout = 0.04
-    start_time = time.time()
-
-    # Wait for echo start
-    while GPIO.input(echo) == 0:
-        pulse_start = time.time()
-        if (pulse_start - start_time) > timeout:
-            return None
-
-    # Wait for echo end
-    while GPIO.input(echo) == 1:
-        pulse_end = time.time()
-        if (pulse_end - pulse_start) > timeout:
-            return None
-
-    pulse_duration = pulse_end - pulse_start
-    return round(pulse_duration * 17150, 2)
+def get_distance(trig_pin, echo_pin):
+    # return centimeters; None if not ready
+    s = None
+    if (trig_pin, echo_pin) == (TRIG_L, ECHO_L):
+        s = _left
+    elif (trig_pin, echo_pin) == (TRIG_R, ECHO_R):
+        s = _right
+    if s is None:
+        return None
+    return s.distance * 100.0  # meters → cm
 
 def cleanup():
-    GPIO.cleanup()
-
-# ---- Run test loop only if executed directly ----
-if __name__ == "__main__":
-    try:
-        setup()
-        while True:
-            d1 = get_distance(TRIG1, ECHO1)
-            d2 = get_distance(TRIG2, ECHO2)
-            print(f"Sensor 1: {d1} cm | Sensor 2: {d2} cm")
-            time.sleep(1)
-    finally:
-        cleanup()
+    if _left: _left.close()
+    if _right: _right.close()
