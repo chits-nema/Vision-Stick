@@ -20,8 +20,7 @@ PWM_HZ = 100 # 100–300 Hz feels good for coin motors
 MIN_CM, MAX_CM = 5.0, 80.0 # map distances to intensity
 MIN_DUTY = 0.01 # overcome static friction; tweak per motor
 
-# If True, make both motors share a common duty (synchronized).
-# You can change how they sync in post_modulate().
+# If True, make both motors share a common duty
 SYNCED = True
 
 # Optional bias to favor one motor (e.g., from CV), 0..1 scale factor
