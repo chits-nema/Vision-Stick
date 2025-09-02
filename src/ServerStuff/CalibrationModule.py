@@ -6,7 +6,7 @@ import socket
 import json
 import requests
 
-SERVER_URL = "https://172.20.10.2:8443"  # replace with actual IP
+SERVER_URL = "https://172.20.10.2:8443"  
 # Filtering
 kernel = np.ones((3, 3), np.uint8)
 
@@ -35,9 +35,9 @@ def run_calibration_and_save(output_path: str = "stereo_params.npz"):
 
     # Start calibration from the camera
     print('Starting calibration for the 2 cameras... ')
-    # Call all saved images
+    
     for i in range(0,
-                   64):  # Put the amount of pictures you have taken for the calibration inbetween range(0,?) wenn starting from the image number 0
+                   64):  
         t = str(i)
 
         # second argument 0 grays the image
@@ -61,11 +61,9 @@ def run_calibration_and_save(output_path: str = "stereo_params.npz"):
         print(t, ChessImaL.shape)
         print(t, ChessImaR.shape)
 
-        """
-        If desired number of corner are detected,
-        we refine the pixel coordinates and display 
-        them on the images of checker board
-        """
+        
+        #If desired number of corner are detected, we refine the pixel coordinates and display them on the images of checker board
+        
         if (True == retR) & (True == retL):
             objpoints.append(objp)
             # refining pixel coordinates for given 2d points.
@@ -86,6 +84,7 @@ def run_calibration_and_save(output_path: str = "stereo_params.npz"):
     detected corners (imgpoints)
     """
 
+    #all the matrices hehehe
     # ret = true if calibrated
     # mtx -> intrinsic camera matrix (focal length fx, fy; optical center cx, cy)
     # dist -> distortion coefficients of the lens
