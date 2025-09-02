@@ -86,7 +86,7 @@ class DisplayManager:
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):  # close preview thread
                     self.stop()
-                elif key == ord('1'):  # toggle always-on-top
+                elif key == ord('1'):  
                     self.always_on_top = not self.always_on_top
                     try:
                         cv2.setWindowProperty(
@@ -163,7 +163,7 @@ class StereoVisionProcessor:
         self.sum_processing_total = 0.0
         self.start_time = time.time()
 
-        # Serialize GPU work across concurrent Flask threads
+        # Serialize GPU
         self._lock = threading.Lock()
 
         print(f"[INFO] StereoVisionProcessor initialized with params: {params_path} and model: {model_path}")
@@ -182,7 +182,7 @@ class StereoVisionProcessor:
         t0 = time.time()
         try:
             with self._lock:
-                # Runtime returns dict with distance_m and bbox now
+                # returns dict with distance_m and bbox
                 payload = stereo.detect_stereo_vision(frameL, frameR)
             dt = time.time() - t0
             self.sum_processing_total += dt
@@ -213,10 +213,10 @@ def _tolist_to_np_uint8(img_like) -> Optional[np.ndarray]:
         return None
     try:
         arr = np.array(img_like, dtype=np.uint8)
-        # basic sanity
+        
         if arr.ndim == 3 and arr.shape[2] in (3, 4):
             if arr.shape[2] == 4:
-                # If RGBA slipped in, drop A for display
+                
                 arr = arr[:, :, :3]
             return arr
     except Exception:
@@ -261,12 +261,12 @@ def process_frame():
         if "error" in payload:
             return jsonify(payload), 500
 
-        # ----- Preview window (annotated image from runtime is a Python list) -----
+        # ----- Preview window -----
         ann_img = _tolist_to_np_uint8(payload.get("annotated_image"))
         if ann_img is not None:
             display.show(ann_img)
 
-        # ----- Distance + primary bbox (both provided by runtime payload) -----
+        # ----- Distance + primary bbox -----
         distance_m = payload.get("distance_m", None)   # float|None
         primary_bbox = payload.get("bbox", None)       # [x1,y1,x2,y2]|None
         frame_w = int(L.shape[1])
@@ -274,7 +274,7 @@ def process_frame():
         # Update cache so the Pi can GET /vision_receiver
         vision_cache.update(distance_m=distance_m, bbox=primary_bbox, frame_w=frame_w)
 
-        # Return compact info (plus processing_time for telemetry)
+        # Return compact info
         return jsonify({
             "mode": "stereo",
             "left": {
@@ -317,7 +317,7 @@ def health():
         pass
     return jsonify({"status": "healthy", "model_loaded": True, "opencv_gpu": gpu_info})
 
-# add near your other routes
+
 @app.route("/about", methods=["GET"])
 def about():
     return jsonify({
@@ -391,7 +391,7 @@ if __name__ == "__main__":
 
     ssl_context = create_ssl_context()
 
-    # threaded=True allows overlapping requests; GPU work is serialized via a lock
+    # GPU work is serialized via a lock
     app.run(
         host="0.0.0.0",
         port=8443,

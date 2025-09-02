@@ -17,9 +17,8 @@ try:
 	GPIO.output(TRIG, True)
 	time.sleep(0.00001)
 	GPIO.output(TRIG, False)
-#	timeout = 0.02 
 
-#	start_time = time.time()
+	
 	while GPIO.input(ECHO) == 0:
 		pulse_start = time.time()
 #		if pulse_start_time - start_time > timeout:

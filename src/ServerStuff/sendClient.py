@@ -10,7 +10,7 @@ import requests
 from picamera2 import Picamera2
 
 # Defaults (can be overridden via get())
-_BASE_URL = "https://x" #  TODO: CHANGE TO YOUR HOST'S IP!!!!
+_BASE_URL = "https://x" #  CHANGE TO YOUR HOST'S IP!!!!
 _POST_PATH = "/process_frame"
 _VERIFY_TLS = False           # set True if your Windows server has a trusted cert
 _TARGET_WIDTH = 640
@@ -183,7 +183,6 @@ class StereoFrameSender:
         # Open once (safe if already open)
         self.ensure_open()
 
-        # honor cadence
         while self._stop_evt and not self._stop_evt.is_set():
             now = time.time()
             # If it's time, tick() will send and also push _next_t
