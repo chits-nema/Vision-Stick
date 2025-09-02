@@ -13,6 +13,7 @@ from flask import Flask, request, jsonify
 
 import StereoRuntime as stereo
 import CalibrationModule as calib
+import sys
 
 
 # =======================
@@ -153,7 +154,7 @@ class StereoVisionProcessor:
     """
     def __init__(self, params_path="stereo_params.npz", model_path="yolo11n.pt"):
         # Prepare calibration + stereo + runtime
-        calib.run_calibration_and_save(output_path=params_path)
+        #calib.run_calibration_and_save(output_path=params_path)
         stereo._build_matchers()
         stereo.init_runtime(params_path=params_path, model_path=model_path)
 
@@ -317,14 +318,14 @@ def health():
     return jsonify({"status": "healthy", "model_loaded": True, "opencv_gpu": gpu_info})
 
 # add near your other routes
-@app.route("/about", methods=["GET"])
-def about():
-    return jsonify({
-        "user": os.getenv("STICK_USER", "unknown"),
-        "note": os.getenv("STICK_NOTE", ""),
-        "server_time": time.time(),
-        "version": "1.0.0"
-    })
+#@app.route("/about", methods=["GET"])
+#def about():
+#    return jsonify({
+#        "user": os.getenv("STICK_USER", "unknown"),
+#        "note": os.getenv("STICK_NOTE", ""),
+#        "server_time": time.time(),
+#        "version": "1.0.0"
+#    })
 
 # =======================
 # TLS (self-signed)
@@ -366,11 +367,17 @@ def _generate_self_signed_cert(crt_path: str, key_path: str):
 # =======================
 # Main
 # =======================
+
+_shutdown = threading.Event()
 def _handle_sig(*_):
+    _shutdown.set()
     try:
         display.stop()
+
     except Exception:
         pass
+
+    sys.exit(0)
     # Flask dev server exits on next loop
 
 if __name__ == "__main__":
