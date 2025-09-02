@@ -28,7 +28,7 @@ import all_new_distancesensor
 import sendClient
 
 # ---------------------------- Server / HTTPS config ----------------------------
-BASE_URL = "https://x"   # TODO: CHANGE TO YOUR HOST'S IP!!!!
+BASE_URL = "https://x.x.x.x/8443"   # TODO: CHANGE TO YOUR HOST'S IP!!!!
 VISION_GET_PATH = "/vision_receiver"     # GET distance/bbox from this route :)
 FRAMES_POST_PATH = "/process_frame"      # POST stereo frames here!
 VERIFY_TLS = False                         # True if server cert is trusted; False for self‑signed (dev only)...
