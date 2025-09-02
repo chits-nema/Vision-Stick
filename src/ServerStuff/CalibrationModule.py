@@ -6,7 +6,7 @@ import socket
 import json
 import requests
 
-SERVER_URL = "https://172.20.10.2:8443"  # replace with actual IP
+SERVER_URL = "https://x"  # TODO: replace with your hosts IP!!!!!!
 # Filtering
 kernel = np.ones((3, 3), np.uint8)
 

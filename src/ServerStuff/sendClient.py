@@ -10,11 +10,11 @@ import requests
 from picamera2 import Picamera2
 
 # Defaults (can be overridden via get())
-_BASE_URL = "https://192.168.0.123:8443" #  CHANGE TO YOUR HOST'S IP!!!!
+_BASE_URL = "https://x" #  TODO: CHANGE TO YOUR HOST'S IP!!!!
 _POST_PATH = "/process_frame"
 _VERIFY_TLS = False           # set True if your Windows server has a trusted cert
 _TARGET_WIDTH = 640
-_FPS = 8.0                    # tick() will send at most this often
+_FPS = 15.0                    # tick() will send at most this often... increase for smoothness, but Pi 5 is already on the limit :'(
 _JPEG_QUALITY = 80
 _HTTP_TIMEOUT_S = 0.25        # keep short so your loop never stalls long
 

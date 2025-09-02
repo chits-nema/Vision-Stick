@@ -28,38 +28,40 @@ import all_new_distancesensor
 import sendClient
 
 # ---------------------------- Server / HTTPS config ----------------------------
-BASE_URL = "https://192.168.0.123:8443"   # CHANGE TO YOUR HOST'S IP!!!!
-VISION_GET_PATH = "/vision_receiver"     # GET distance/bbox here
-FRAMES_POST_PATH = "/process_frame"      # POST stereo frames here
-VERIFY_TLS = False                         # True if server cert is trusted; False for self‑signed (dev only)
+BASE_URL = "https://x"   # TODO: CHANGE TO YOUR HOST'S IP!!!!
+VISION_GET_PATH = "/vision_receiver"     # GET distance/bbox from this route :)
+FRAMES_POST_PATH = "/process_frame"      # POST stereo frames here!
+VERIFY_TLS = False                         # True if server cert is trusted; False for self‑signed (dev only)...
 
 VISION_URL = BASE_URL.rstrip("/") + VISION_GET_PATH
 FRAMES_URL = BASE_URL.rstrip("/") + FRAMES_POST_PATH
 
-VISION_POLL_PERIOD_S = 0.10   # 10 Hz polling for metadata
-VISION_FRESHNESS_S = 0.75     # max age to accept a reading
-HTTP_TIMEOUT_S = 0.40         # keep tight to avoid blocking
-DEFAULT_FRAME_W = 640
-VISION_TRIGGER_CM = 15.0      # trigger if camera says <= this (OR with ultrasonics)
+VISION_POLL_PERIOD_S = 0.10   # 10 Hz polling for metadata. Kept low to avoid server overload
+VISION_FRESHNESS_S = 0.75     # the max age to accept a reading
+HTTP_TIMEOUT_S = 0.40         # keep tight to avoid blocking and "stalling"
+DEFAULT_FRAME_W = 640         # fallback if server doesn't send frame_w! (null) D:
+VISION_TRIGGER_CM = 200.0      # trigger if camera says <= this (OR with ultrasonics)
 
 # ---------------------------- Pins / control ----------------------------------
 MOTOR_L_PIN, MOTOR_R_PIN = 13, 12
 TRIG_L, ECHO_L = 18, 14
 TRIG_R, ECHO_R = 24, 15
 PWM_HZ = 100
-MIN_CM, MAX_CM = 5.0, 100.0
+MIN_CM, MAX_CM = 5.0, 400.0
 MIN_DUTY = 0.01
 SYNCED = True
+MAX_DUTY_NEAR = 0.25
+FAR_DUTY_FLOOR = 0.06 # Noticeable baseline even when far
 
 # ---------------------------- Bias behavior -----------------------------------
 BIAS_MIN = 0.5
 BIAS_MAX = 1.5
+BIAS_L = 1.0
+BIAS_R = 1.0
 CENTER_DEAD_ZONE_FRAC = 0.05
 MAX_REASONABLE_FRAME_W = 10000
 
 # ---------------------------- Globals (updated live) ---------------------------
-BIAS_L = 1.0
-BIAS_R = 1.0
 
 _last_poll_ts = 0.0
 _last_seen_ts = 0.0
@@ -95,10 +97,14 @@ def is_valid_cm(value) -> bool:
 
 def map_dist_to_duty(d_cm: float) -> float:
     if d_cm <= MIN_CM:
-        return 0.25
+        return MAX_DUTY_NEAR
     if d_cm >= MAX_CM:
         return 0.0
-    return 0.25 - (d_cm - MIN_CM) / (4 * (MAX_CM - MIN_CM))
+    # Linear mapping in [MIN_CM, MAX_CM], because we had complaints that the decay was too fast
+    t = (d_cm -  MIN_CM) / (MAX_CM - MIN_CM) # Number in [0, 1] within detection range
+    # This is a linear mapping that decays much slower so our vision detection is more useful :)
+    duty = FAR_DUTY_FLOOR + (MAX_DUTY_NEAR - FAR_DUTY_FLOOR) * (1.0 - t)
+    return max(0.0, duty)
 
 
 def post_modulate(duty_l: float, duty_r: float) -> tuple[float, float]:
@@ -200,9 +206,9 @@ def _parse_vision_json(raw: bytes) -> Tuple[Optional[float], Tuple[float, float]
             if abs(cx - center) <= dead:
                 bias = (1.0, 1.0)
             else:
-                # normalized signed error in [-1, 1]: + means target is left of center
+                # normalized signed error in [-1, 1]: + means target is left of center!
                 err = (center - cx) / center
-                # gain limits the swing; choose 0.25 for +/-25% before clamping
+                # gain limits the swing you can choose 0.25 for +/-25% before clamping
                 gain = 0.25
                 bias_l = 1.0 + gain * err
                 bias_r = 1.0 - gain * err
@@ -216,6 +222,7 @@ def _parse_vision_json(raw: bytes) -> Tuple[Optional[float], Tuple[float, float]
 # ---------------------------- Vision polling cache ----------------------------
 
 def poll_vision_if_due():
+    # Poll vision JSON and if due update globals.
     global _last_poll_ts, _last_seen_ts, _last_vision_cm, _last_bias
     now = time.time()
     if (now - _last_poll_ts) < VISION_POLL_PERIOD_S:
@@ -232,6 +239,7 @@ def poll_vision_if_due():
 
 
 def snapshot_vision() -> Tuple[Optional[float], Tuple[float, float]]:
+    # Return the last-seen vision distance_cm (or None if stale) and the last bias (always).
     age = time.time() - _last_seen_ts
     if age > VISION_FRESHNESS_S:
         return None, (1.0, 1.0)
@@ -242,7 +250,7 @@ def snapshot_vision() -> Tuple[Optional[float], Tuple[float, float]]:
 def main():
     global BIAS_L, BIAS_R
 
-    # Start stereo frame sender (background). Comment out to run as separate script.
+    # Start stereo frame sender (thread in the background).
     sender = sendClient.StereoFrameSender.get(base_url=BASE_URL, verify_tls=False, fps=6.0, http_timeout_s=0.2)
     sender.start()
 
@@ -264,7 +272,7 @@ def main():
             d_l = safe_get_ultra_cm(TRIG_L, ECHO_L)
             d_r = safe_get_ultra_cm(TRIG_R, ECHO_R)
 
-            # OR logic: either source can trigger vibration
+            # OR logic: either source can trigger vibration! We use the higher duty cycle, i.e. most urgent obstacles!!!
             def decide_duty(ultra_cm: Optional[float]) -> float:
                 duty_ultra = map_dist_to_duty(ultra_cm) if ultra_cm is not None else 0.0
                 duty_vis = 0.0
@@ -288,7 +296,6 @@ def main():
                     return "(None)"
                 x1, y1, x2, y2 = bb
 
-                # y may be None if server only sends (x1, x2); print gracefully
                 def f(a):
                     return "--" if a is None else f"{a:.1f}"
 

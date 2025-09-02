@@ -1,6 +1,8 @@
 # servermanager.py
 import os
 import ssl
+import sys
+
 import cv2
 import time
 import base64
@@ -153,7 +155,6 @@ class StereoVisionProcessor:
     """
     def __init__(self, params_path="stereo_params.npz", model_path="yolo11n.pt"):
         # Prepare calibration + stereo + runtime
-        calib.run_calibration_and_save(output_path=params_path)
         stereo._build_matchers()
         stereo.init_runtime(params_path=params_path, model_path=model_path)
 
@@ -366,11 +367,14 @@ def _generate_self_signed_cert(crt_path: str, key_path: str):
 # =======================
 # Main
 # =======================
+_shutdown = threading.Event()
 def _handle_sig(*_):
+    _shutdown.set()
     try:
         display.stop()
     except Exception:
         pass
+    sys.exit(0)
     # Flask dev server exits on next loop
 
 if __name__ == "__main__":
