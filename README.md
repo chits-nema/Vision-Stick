@@ -25,7 +25,7 @@ Vision-Stick enhances a traditional white cane with real-time obstacle awareness
 - Raspberry Pi 5 (8 GB)
 - 2 × Raspberry Pi Cameras (IMX219)  
 - 2 × HC-SR04 ultrasonic sensors  
-- 2 × coin vibration motors  
+- 2 × cylindrical vibration motors  
 - 3D-printed mounting bracket for the cane
 
 ---
